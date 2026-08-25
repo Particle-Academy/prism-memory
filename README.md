@@ -147,11 +147,29 @@ the miss is explained, or it did not and the cause is elsewhere.
 
 `ranked()` gives you score order, for looking at rather than for building a prompt.
 
-**Where the caching story stops.** Placing an actual cache *breakpoint* is provider-specific in
-Prism today — Anthropic takes `cacheType` through `providerOptions` on a message and there is no
-portable notion of one. This package therefore gives you stable bytes and a way to see them change,
-and leaves the breakpoint to you. Put memory *after* your static instructions and mark the static
-block, so a change in recall cannot invalidate the part that never changes. See the findings below.
+**Where the caching story stops, for now.** Placing an actual cache *breakpoint* is
+provider-specific in Prism today. Twelve providers report `cacheReadInputTokens` back to you;
+**three** honour a cache declaration, and they do it in an Anthropic-shaped spelling carried through
+`providerOptions`. Gemini and Vertex use a different model again — create a `cachedContents`
+resource, then reference it by name. So core can already tell you whether you got a cache hit and
+gives you no portable way to affect the answer.
+
+Until that is decided, this package gives you stable bytes and a way to see them change, and leaves
+the breakpoint to you:
+
+```php
+Prism::text()
+    ->withSystemPrompt($instructions)                  // stable — mark THIS one
+    ->withSystemPrompt($relevant->asContext())         // changes as memory grows
+    ->withPrompt($question)                            // changes every turn
+```
+
+Stable content first, volatile content last, on every provider — that ordering is the part that is
+already portable, and it is what an automatic-prefix provider like OpenAI rewards without any
+markers at all.
+
+**Treat the manual step as interim.** A portable cache-hint proposal is with the coordinating agent
+and this section changes when it is ratified. See the findings below.
 
 ## Forgetting
 
@@ -327,11 +345,16 @@ strings from a provider are inside the contract, so every consumer has to normal
 every similarity computed against that record NAN, and because NAN comparisons are always false the
 record silently stops being retrievable rather than failing.
 
-**There is no portable notion of a prompt-cache breakpoint.** `cacheType` is Anthropic-specific and
-rides in `providerOptions`. A memory layer can keep its own bytes stable but cannot tell a provider
-where the cacheable prefix ends, so the one thing that would make cache-aware memory automatic is
-the one thing it cannot do. This is a cross-cutting question — `prism-harness` threads feed the
-same prefix — and is escalated rather than worked around.
+**There is no portable notion of a prompt-cache breakpoint, and the asymmetry is measurable.**
+Cache *accounting* is already portable: `Usage::$cacheReadInputTokens` is populated by twelve
+providers. Cache *declaration* is not: three honour `cacheType`, spelled the Anthropic way through
+`providerOptions`, and Gemini and Vertex use a create-and-reference model instead. Core reports a
+number it gives you no portable way to influence.
+
+A memory layer can keep its own bytes stable but cannot tell a provider where the cacheable prefix
+ends, so the one thing that would make cache-aware memory automatic is the one thing it cannot do.
+Cross-cutting — `prism-harness` threads feed the same prefix — so it is escalated with a proposal
+rather than worked around here.
 
 **`UserMessage::text()` is not the message's text.** The constructor appends a `Text` part built
 from `content`, and `text()` concatenates every part — so on a message carrying its own parts it
