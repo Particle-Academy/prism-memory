@@ -326,7 +326,7 @@ it('purges a whole collection and reports how many went', function (): void {
     expect($store->purge('c'))->toBe(2)->and($store->count('c'))->toBe(0);
 });
 
-it('purges only what is older than a cut-off', function (): void {
+it('purges on when a record happened, not on when the row was written', function (): void {
     $store = store();
 
     $store->upsert([
@@ -334,7 +334,7 @@ it('purges only what is older than a cut-off', function (): void {
         record('new', 'today', at: Carbon::now()),
     ]);
 
-    expect($store->purge('c', Carbon::now()->subMonth()))->toBe(1)
+    expect($store->purgeOccurredBefore('c', Carbon::now()->subMonth()))->toBe(1)
         ->and($store->count('c'))->toBe(1);
 });
 
@@ -369,4 +369,99 @@ it('lists what is written but not yet embedded, oldest first', function (): void
 
 it('is durable, which is the whole reason this driver exists', function (): void {
     expect(store()->durability())->toBe(Durability::Durable);
+});
+
+/*
+|--------------------------------------------------------------------------
+| Searching several collections at once
+|--------------------------------------------------------------------------
+|
+| Ratified as an amendment because three round trips where one
+| `WHERE collection IN (...)` would do is a cost paid on every query.
+|
+*/
+
+it('searches several collections in one query', function (): void {
+    $store = store(IndexSettings::STRATEGY_EXACT);
+    $vector = Vector::of([1.0, 0.0, 0.0, 0.0]);
+
+    $store->upsert([
+        new VectorRecord('handbook', 'a', 'from the handbook', $vector, 'test:space'),
+        new VectorRecord('contracts', 'b', 'from the contracts', $vector, 'test:space'),
+        new VectorRecord('elsewhere', 'c', 'not asked for', $vector, 'test:space'),
+    ]);
+
+    $matches = $store->search(new VectorQuery(['handbook', 'contracts'], $vector, 'test:space'));
+
+    expect($matches)->toHaveCount(2)
+        ->and(array_column($matches, 'content'))
+        ->toContain('from the handbook')->toContain('from the contracts');
+});
+
+it('says which collection each result came from', function (): void {
+    // Without this a merged result set is unattributable — a passage from the
+    // handbook and one from the contracts, indistinguishable — and a caller
+    // trying to cite them would have to search again per collection, which is
+    // the round trip the amendment removed.
+    $store = store(IndexSettings::STRATEGY_EXACT);
+    $vector = Vector::of([1.0, 0.0, 0.0, 0.0]);
+
+    $store->upsert([
+        new VectorRecord('handbook', 'a', 'from the handbook', $vector, 'test:space'),
+        new VectorRecord('contracts', 'b', 'from the contracts', $vector, 'test:space'),
+    ]);
+
+    $byCollection = [];
+
+    foreach ($store->search(new VectorQuery(['handbook', 'contracts'], $vector, 'test:space')) as $match) {
+        $byCollection[$match->collection] = $match->content;
+    }
+
+    expect($byCollection)->toBe([
+        'handbook' => 'from the handbook',
+        'contracts' => 'from the contracts',
+    ]);
+});
+
+it('fills the collection on a single-collection search too', function (): void {
+    // A field that is only sometimes populated is a field every caller has to
+    // null-check.
+    $store = store(IndexSettings::STRATEGY_EXACT);
+    $store->upsert([record('a', 'hello')]);
+
+    expect($store->search(new VectorQuery('c', Vector::of([1.0, 0.0, 0.0, 0.0]), 'test:space'))[0]->collection)
+        ->toBe('c');
+});
+
+it('refuses a query that names no collection at all', function (): void {
+    // An unscoped search would read every collection in the table, which across
+    // owners is one participant being handed another participant's memories.
+    expect(fn (): VectorQuery => new VectorQuery([], Vector::of([1.0, 0.0]), 'test:space'))
+        ->toThrow(InvalidArgumentException::class, 'must name at least one collection');
+
+    expect(fn (): VectorQuery => new VectorQuery('', Vector::of([1.0, 0.0]), 'test:space'))
+        ->toThrow(InvalidArgumentException::class, 'must name at least one collection');
+});
+
+it('refuses a collection name that is not a usable string', function (): void {
+    expect(fn (): VectorQuery => new VectorQuery(['handbook', 42], Vector::of([1.0, 0.0]), 'test:space'))
+        ->toThrow(InvalidArgumentException::class, 'must be a non-empty string');
+});
+
+it('normalises a keyed or gappy collection array into a list', function (): void {
+    // The parameter accepts any array precisely so this guard is reachable —
+    // `list<string>` on a parameter is a promise the type system does not keep.
+    $query = new VectorQuery(['first' => 'handbook', 7 => 'contracts'], Vector::of([1.0, 0.0]), 'test:space');
+
+    expect($query->collections)->toBe(['handbook', 'contracts']);
+});
+
+it('names every collection searched when the embedding model has changed', function (): void {
+    $store = store(IndexSettings::STRATEGY_EXACT);
+    $vector = Vector::of([1.0, 0.0, 0.0, 0.0]);
+
+    $store->upsert([new VectorRecord('handbook', 'a', 'stored under one model', $vector, 'test:space')]);
+
+    expect(fn (): array => $store->search(new VectorQuery(['handbook', 'contracts'], $vector, 'test:other')))
+        ->toThrow(EmbeddingSpaceMismatch::class, '[handbook], [contracts]');
 });

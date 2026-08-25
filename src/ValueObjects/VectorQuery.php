@@ -18,17 +18,58 @@ use InvalidArgumentException;
 final readonly class VectorQuery
 {
     /**
+     * The collections this query searches, normalised to a list.
+     *
+     * The narrowing boundary, for the same reason `VectorRecord` has one: PHP
+     * does not enforce a docblock, so `list<string>` on a parameter is a
+     * statement of intent that any caller can ignore — and a guard against
+     * something the type system already promised is a guard nobody can make
+     * fail. The parameter therefore accepts any array and this property is what
+     * every driver relies on.
+     *
+     * @var list<string>
+     */
+    public array $collections;
+
+    /**
+     * @param  string|array<array-key, mixed>  $collection  One namespace, or several searched together.
      * @param  array<string, scalar|null|list<scalar>>  $filter  Equality on metadata keys; a list means "any of".
      * @param  float|null  $minSimilarity  Applied by the store, before any reranking.
      */
     public function __construct(
-        public string $collection,
+        string|array $collection,
         public Vector $vector,
         public string $space,
         public int $limit = 64,
         public array $filter = [],
         public ?float $minSimilarity = null,
     ) {
+        $collections = is_string($collection) ? [$collection] : array_values($collection);
+
+        // An empty string and an empty array are the same mistake — nothing was
+        // named — so they get the same message. Letting `''` fall through to the
+        // per-element check would diagnose it as a type problem and send whoever
+        // reads it looking at the wrong thing.
+        if ($collections === [] || $collections === ['']) {
+            throw new InvalidArgumentException(
+                'A vector query must name at least one collection. An unscoped search would read every '
+                .'collection in the table, which across owners is one participant being handed another '
+                ."participant's memories."
+            );
+        }
+
+        foreach ($collections as $name) {
+            if (! is_string($name) || $name === '') {
+                throw new InvalidArgumentException(
+                    'A collection name must be a non-empty string, and a ['.get_debug_type($name).'] was '
+                    .'given. Anything else reaches the WHERE clause as whatever it casts to, which is a '
+                    .'search of a collection nobody named.'
+                );
+            }
+        }
+
+        $this->collections = $collections;
+
         if ($limit < 1) {
             throw new InvalidArgumentException('A vector query limit must be at least 1.');
         }

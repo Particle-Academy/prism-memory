@@ -176,8 +176,15 @@ and this section changes when it is ratified. See the findings below.
 ```php
 $memory->forget($ids);              // specific memories
 $memory->forget();                  // this owner, this scope, all of it
-$memory->forgetBefore($date);       // everything older than a cut-off
+$memory->forgetBefore($date);       // everything that HAPPENED before $date
 ```
+
+`forgetBefore()` cuts on when the remembered thing occurred, not on when the row
+was written — so a conversation backfilled last week from two years ago is
+forgotten by the age of the conversation. The store method spells that out:
+`purgeOccurredBefore()`, because a bare `purge($collection, $before)` reads as
+"drop what I ingested before X" and the difference only ever shows up as missing
+data.
 
 **A hard delete, not a flag.** "Forget this" is a request a person is entitled to make about what a
 system knows of them, and a soft delete answers it with a row that still exists — the wrong answer
@@ -189,9 +196,53 @@ past its window is never recalled just because nothing has pruned it. Null is th
 package that quietly expires things is worse than one that keeps them: an agent that has forgotten
 what it was told behaves exactly like an agent that was never told.
 
+## Provenance, and the keys `prism-rag` shares
+
+A record can carry where it came from. The keys are ratified across the
+ecosystem and live as **code** rather than as a convention two packages each
+implement from a paragraph:
+
+```php
+$memory->remember($passage, metadata: (new Provenance(
+    id: 'handbook.md',
+    uri: 'https://example.test/handbook.md',
+    version: 'a1b2c3',
+    part: 4,
+    heading: 'Billing > Refunds',
+))->toMetadata());
+
+$provenance = Provenance::fromMetadata($recalled->metadata);
+```
+
+**`source_*` is reserved for the ecosystem**, along with `kind` and `role`. Put
+anything else you like in a record's metadata; those keys belong to the
+packages, so a new provenance field can be added without renegotiating with
+every consumer.
+
+Provenance is metadata rather than a first-class field on a result, because a
+field that is always null for conversational memory is worse than a documented
+key. `source_version` is the one that earns its place beyond citation: it is
+what makes "has this document changed since we chunked it" answerable without
+re-chunking it.
+
+This is the one place the package deliberately collapses **absent** and
+**null** — there is no useful difference between "no page number was recorded"
+and "the page number is null", and nine explicit nulls on every memory that has
+no provenance is nine dead keys in every row. Unset fields are omitted and
+rebuild as null, so the round trip is still lossless.
+
 ## Storage
 
 Defaults to the database, because that is what every Laravel app already has.
+
+A search may name **several collections at once** — one query, not a loop, because
+three round trips where one `WHERE collection IN (...)` would do is a cost paid
+on every search. Every result carries the collection it came from, so a merged
+set stays attributable:
+
+```php
+$store->search(new VectorQuery(['handbook', 'contracts'], $vector, $space));
+```
 
 Register a real vector database when you outgrow it:
 

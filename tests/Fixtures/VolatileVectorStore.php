@@ -38,7 +38,13 @@ final class VolatileVectorStore implements VectorStore
     }
 
     #[\Override]
-    public function purge(string $collection, ?DateTimeInterface $before = null): int
+    public function purge(string $collection): int
+    {
+        return 0;
+    }
+
+    #[\Override]
+    public function purgeOccurredBefore(string $collection, DateTimeInterface $before): int
     {
         return 0;
     }

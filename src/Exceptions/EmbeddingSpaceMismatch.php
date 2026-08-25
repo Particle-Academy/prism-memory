@@ -26,10 +26,15 @@ use RuntimeException;
  */
 final class EmbeddingSpaceMismatch extends RuntimeException
 {
-    public static function collection(string $collection, string $stored, string $queried): self
+    /**
+     * @param  list<string>  $collections
+     */
+    public static function collection(array $collections, string $stored, string $queried): self
     {
+        $named = implode('], [', $collections);
+
         return new self(
-            "The memories in [{$collection}] were embedded with [{$stored}], and this search used "
+            "The memories in [{$named}] were embedded with [{$stored}], and this search used "
             ."[{$queried}]. Vectors from two embedding models are not comparable — the dimensions do not "
             ."correspond, so any similarity between them is a number without a meaning.\n\n"
             .'Either put the previous model back, or re-embed the collection under the new one. Both are '

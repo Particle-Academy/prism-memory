@@ -160,6 +160,7 @@ final class DatabaseVectorStore implements VectorStore
             }
 
             $matches[] = new VectorMatch(
+                collection: (string) $row->collection,
                 recordId: (string) $row->record_id,
                 content: (string) $row->content,
                 metadata: $this->decodeMetadata($row->metadata),
@@ -187,15 +188,18 @@ final class DatabaseVectorStore implements VectorStore
     }
 
     #[\Override]
-    public function purge(string $collection, ?DateTimeInterface $before = null): int
+    public function purge(string $collection): int
     {
-        $query = $this->vectors()->where('collection', $collection);
+        return $this->vectors()->where('collection', $collection)->delete();
+    }
 
-        if ($before !== null) {
-            $query->where('occurred_at', '<', $before);
-        }
-
-        return $query->delete();
+    #[\Override]
+    public function purgeOccurredBefore(string $collection, DateTimeInterface $before): int
+    {
+        return $this->vectors()
+            ->where('collection', $collection)
+            ->where('occurred_at', '<', $before)
+            ->delete();
     }
 
     #[\Override]
@@ -341,7 +345,7 @@ final class DatabaseVectorStore implements VectorStore
     private function readable(VectorQuery $query)
     {
         $builder = $this->vectors()
-            ->where('collection', $query->collection)
+            ->whereIn('collection', $query->collections)
             ->where('space', $query->space)
             ->whereNotNull('vector')
             // Expiry is enforced here rather than by a sweeper, so a memory past
@@ -368,13 +372,13 @@ final class DatabaseVectorStore implements VectorStore
     {
         /** @var mixed $other */
         $other = $this->vectors()
-            ->where('collection', $query->collection)
+            ->whereIn('collection', $query->collections)
             ->whereNotNull('vector')
             ->where('space', '!=', $query->space)
             ->value('space');
 
         if (is_string($other)) {
-            throw EmbeddingSpaceMismatch::collection($query->collection, $other, $query->space);
+            throw EmbeddingSpaceMismatch::collection($query->collections, $other, $query->space);
         }
     }
 

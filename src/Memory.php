@@ -260,9 +260,17 @@ final class Memory
             : $this->store->forget($this->collection, $ids);
     }
 
+    /**
+     * Forget everything that HAPPENED before this moment.
+     *
+     * The cut is on when the remembered thing occurred, not on when the row was
+     * written — so a conversation backfilled last week from two years ago is
+     * forgotten by the age of the conversation, which is what anyone asking to
+     * forget old memories means.
+     */
     public function forgetBefore(DateTimeInterface $before): int
     {
-        return $this->store->purge($this->collection, $before);
+        return $this->store->purgeOccurredBefore($this->collection, $before);
     }
 
     public function count(): int

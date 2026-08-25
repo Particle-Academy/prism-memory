@@ -33,8 +33,12 @@ use Prism\Memory\ValueObjects\VectorRecord;
  *    request. A record is written immediately and embedded afterwards, which
  *    means both need to find the records that never got their vector, whether
  *    because the queue was empty or because a worker died.
- *  - `purge` takes an optional cut-off so that time-bounded forgetting does not
- *    require every implementation to expose a query builder.
+ *  - `purgeOccurredBefore` names the axis it cuts on IN THE METHOD NAME. A
+ *    `purge($collection, $before)` reads as "drop rows ingested before X" and
+ *    would mean "drop records whose subject matter is dated before X" — for
+ *    `prism-rag` those are the document's date and the import's date, and the
+ *    difference only ever shows up as missing data. An ingestion-time purge, if
+ *    it is ever wanted, is a second method with its own name and not a flag.
  *  - `durability` is not inferable. Only the operator knows whether a given
  *    backend survives a deploy, and memory that a deploy can clear is a cache
  *    that must say so.
@@ -59,6 +63,13 @@ interface VectorStore
     /**
      * Nearest neighbours, most similar first.
      *
+     * A query may name one collection or several, and several must be ONE
+     * query rather than a loop. Searching three corpora as three round trips
+     * and merging in PHP is a cost paid on every search, where a driver that
+     * knows it is being asked for three can answer with a single
+     * `WHERE collection IN (...)`. Every result carries the collection it came
+     * from, so a merged set stays attributable.
+     *
      * Implementations MAY be approximate, and an approximate implementation
      * must say so in its own documentation rather than in this one — a caller
      * that believes it is getting exact nearest neighbours and is not will
@@ -76,13 +87,25 @@ interface VectorStore
     public function forget(string $collection, array $recordIds): int;
 
     /**
-     * Remove a whole collection, or everything in it older than $before.
+     * Remove a whole collection.
      *
-     * Returns how many rows went, because "delete this person's memories"
-     * is an assertion someone may later have to evidence, and a void return
-     * cannot be evidence of anything.
+     * Returns how many rows went, because "delete this person's memories" is an
+     * assertion someone may later have to evidence, and a void return cannot be
+     * evidence of anything.
      */
-    public function purge(string $collection, ?DateTimeInterface $before = null): int;
+    public function purge(string $collection): int;
+
+    /**
+     * Remove everything in a collection whose `occurredAt` is before $before.
+     *
+     * The name states the axis on purpose. `occurredAt` is when the remembered
+     * thing HAPPENED — the turn, or the document's date — and not when the row
+     * was written. For a backfilled corpus those differ by years, and a caller
+     * who read a bare `purge($collection, $before)` as "drop what I ingested
+     * before X" would delete a different set than they intended and find out by
+     * missing it.
+     */
+    public function purgeOccurredBefore(string $collection, DateTimeInterface $before): int;
 
     /**
      * How many records a collection holds.
