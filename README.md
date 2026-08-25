@@ -229,7 +229,17 @@ This is the one place the package deliberately collapses **absent** and
 **null** — there is no useful difference between "no page number was recorded"
 and "the page number is null", and nine explicit nulls on every memory that has
 no provenance is nine dead keys in every row. Unset fields are omitted and
-rebuild as null, so the round trip is still lossless.
+rebuild as null, so the round trip is lossless *because the two states were
+never distinct*.
+
+**It is an interpretation rule, not a storage rule**, and the distinction
+matters to anyone porting this. The store keeps absent and null apart for every
+key without exception, `source_*` included: a record written with
+`['source_page' => null]` comes back with that key present and null. Only
+`Provenance` reads the two as one state. Collapsing at the storage layer instead
+is the plausible mistake, and the ordinary absent-vs-null test cannot see it —
+so there is a reserved-key case that can only pass if the store got the layer
+right. The contract says so where a port will read it.
 
 ## Storage
 

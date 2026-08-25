@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Prism\Memory\ValueObjects;
 
+use Prism\Memory\Contracts\VectorStore;
+
 /**
  * Where a stored record came from, in keys both packages agree on.
  *
@@ -28,18 +30,38 @@ namespace Prism\Memory\ValueObjects;
  * rather than renamed, because renaming them would orphan every row already
  * stored.
  *
- * ## Absent and null mean the same thing here, deliberately
+ * ## Absent and null are ONE state here — a port MUST NOT distinguish them
  *
- * Every other round trip in this package is careful to keep them apart — it is
- * the first divergence axis in decision 0007 and there is a test for it.
- * Provenance is the exception, and it is an exception on purpose rather than an
- * oversight: there is no useful difference between "no page number was
- * recorded" and "the page number is null", and writing nine explicit nulls onto
- * every memory that has no provenance would put nine dead keys in every row and
- * nine dead branches in every metadata filter.
+ * Every other round trip in this package is careful to keep them apart. It is
+ * the first divergence axis in decision 0007, PHP has one absent value where
+ * JavaScript has two and Python has another, and there is a test for it.
  *
- * Null fields are therefore OMITTED, and rebuilding maps absent back to null.
- * The round trip is still lossless because the two states were never distinct.
+ * Provenance is the exception, on purpose rather than by oversight. The test
+ * that justifies it is not "does this follow the default" but "do the two
+ * states carry different meaning": there is no useful difference between "no
+ * page number was recorded" and "the page number is null". They are defined as
+ * identical, so collapsing them loses nothing — while writing nine explicit
+ * nulls onto every memory that has no provenance would put nine dead keys in
+ * every row and nine dead branches in every metadata filter, bought for
+ * nothing.
+ *
+ * Unset fields are therefore OMITTED by `toMetadata()`, and `fromMetadata()`
+ * maps absent back to null. The round trip is lossless BECAUSE THE TWO STATES
+ * WERE NEVER DISTINCT — that sentence is the whole justification, and a port
+ * that reinvents the distinction breaks it.
+ *
+ * **This is stated here and in {@see VectorStore} rather than only here.** A
+ * port meets a language with two absent values and will reinvent the
+ * distinction unless the contract tells it not to, and by then the exception
+ * has survived exactly as long as nobody ported the package.
+ *
+ * ## The layer this collapse does NOT apply to
+ *
+ * It is an interpretation rule, not a storage rule. The STORE must round-trip
+ * an explicit null under a `source_*` key faithfully, exactly as it does for
+ * any other key — dropping it on write because "provenance treats them as the
+ * same" is the wrong layer, and it is a divergence a suite that only checks
+ * absent-vs-null on an ordinary key will not catch.
  */
 final readonly class Provenance
 {

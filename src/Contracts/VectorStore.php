@@ -6,6 +6,7 @@ namespace Prism\Memory\Contracts;
 
 use DateTimeInterface;
 use Prism\Memory\Enums\Durability;
+use Prism\Memory\ValueObjects\Provenance;
 use Prism\Memory\ValueObjects\VectorMatch;
 use Prism\Memory\ValueObjects\VectorQuery;
 use Prism\Memory\ValueObjects\VectorRecord;
@@ -21,7 +22,7 @@ use Prism\Memory\ValueObjects\VectorRecord;
  * own, and decision 0008 records why: two abstractions for one job is exactly
  * what turns an ecosystem into a collection.
  *
- * Seven methods, and each earns its place from a requirement one of the two
+ * Eight methods, and each earns its place from a requirement one of the two
  * packages actually has:
  *
  *  - `upsert` is keyed on a CALLER-OWNED id, which is what makes both packages'
@@ -46,6 +47,36 @@ use Prism\Memory\ValueObjects\VectorRecord;
  * What is deliberately NOT here: index tuning, embedding, chunking, and
  * anything resembling a query builder. A store takes vectors and returns
  * neighbours. Everything else is the consuming package's business.
+ *
+ * ## Absent and null in metadata — READ THIS BEFORE PORTING
+ *
+ * There are TWO rules here and they operate at DIFFERENT LAYERS. A port that
+ * applies either one at the wrong layer produces a store that passes its own
+ * tests and disagrees with this one.
+ *
+ * **Storage keeps them apart, for every key without exception.** A record
+ * written with `['source_page' => null]` must come back with `source_page`
+ * PRESENT and null. A record written without the key must come back without it.
+ * That includes keys under the reserved `source_*` prefix — the store attaches
+ * no meaning to any key and must not normalise one away. This is the first
+ * divergence axis in decision 0007, and PHP has one absent value where
+ * JavaScript has two and Python has another, so a port meets this immediately.
+ *
+ * **{@see Provenance} collapses them, deliberately, and ONLY in its own
+ * interpretation.** `Provenance::fromMetadata()` reads an explicit null and an
+ * absent key as the same state, because for provenance there is no useful
+ * difference between "no page number was recorded" and "the page number is
+ * null". `toMetadata()` therefore omits what it does not know rather than
+ * writing nine nulls onto every record. **A port must not distinguish them
+ * there** — reinventing the distinction would make a ported `Provenance`
+ * disagree with this one about a record both stored correctly.
+ *
+ * The trap is the crossing: collapsing at the STORAGE layer — dropping null
+ * `source_*` keys on write, because "provenance treats them as the same" — is
+ * wrong, and a suite that only tests absent-vs-null on an ORDINARY key will not
+ * catch it. `suites/`-style discrimination applies: the case that proves the
+ * rule is a `source_*` key carrying an explicit null, round-tripped through the
+ * store. `DatabaseVectorStoreTest` carries exactly that case for that reason.
  */
 interface VectorStore
 {

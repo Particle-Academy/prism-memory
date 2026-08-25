@@ -2,8 +2,14 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Facades\DB;
 use Prism\Memory\PrismMemory;
+use Prism\Memory\Stores\DatabaseVectorStore;
+use Prism\Memory\Support\IndexSettings;
 use Prism\Memory\ValueObjects\Provenance;
+use Prism\Memory\ValueObjects\Vector;
+use Prism\Memory\ValueObjects\VectorQuery;
+use Prism\Memory\ValueObjects\VectorRecord;
 use Tests\Fixtures\Owner;
 
 /*
@@ -129,4 +135,82 @@ it('keeps an integer an integer across the round trip', function (): void {
     $metadata = $memory->recall('a passage')->all()[0]->metadata;
 
     expect($metadata['source_part'])->toBe(4)->and($metadata['source_page'])->toBe(12);
+});
+
+/*
+|--------------------------------------------------------------------------
+| Two rules, two layers
+|--------------------------------------------------------------------------
+|
+| The collapse is an INTERPRETATION rule. The store keeps absent and null apart
+| for every key without exception, including the reserved ones. A port that
+| applies the collapse at the storage layer — dropping null `source_*` keys on
+| write — produces a store that passes its own tests and disagrees with this
+| one, and the existing absent-vs-null test cannot catch it because that test
+| uses an ordinary key.
+|
+| These are the discriminating cases.
+|
+*/
+
+it('stores an explicit null under a reserved key without normalising it away', function (): void {
+    // The case that proves the rule. `distinguishes a metadata key that is null
+    // from one that is absent` uses an ORDINARY key, so it stays green against
+    // a store that special-cases `source_*` — which is exactly the mistake the
+    // contract now warns a port against.
+    $store = new DatabaseVectorStore(DB::connection(), new IndexSettings(strategy: IndexSettings::STRATEGY_EXACT));
+    $vector = Vector::of([1.0, 0.0]);
+
+    $store->upsert([new VectorRecord('c', 'a', 'x', $vector, 's', ['source_page' => null])]);
+
+    $metadata = $store->search(new VectorQuery('c', $vector, 's'))[0]->metadata;
+
+    expect($metadata)->toHaveKey('source_page')
+        ->and($metadata['source_page'])->toBeNull();
+});
+
+it('leaves a reserved key absent when it was never written', function (): void {
+    // The other half: the store must not INVENT the key either.
+    $store = new DatabaseVectorStore(DB::connection(), new IndexSettings(strategy: IndexSettings::STRATEGY_EXACT));
+    $vector = Vector::of([1.0, 0.0]);
+
+    $store->upsert([new VectorRecord('c', 'a', 'x', $vector, 's', ['other' => 1])]);
+
+    expect($store->search(new VectorQuery('c', $vector, 's'))[0]->metadata)->not->toHaveKey('source_page');
+});
+
+it('reads a stored explicit null and a stored absence as the same provenance', function (): void {
+    // And here the two layers meet: storage kept them apart, interpretation
+    // treats them as one, and both are correct. A port that distinguished them
+    // in Provenance would fail this; a port that collapsed them in the store
+    // would fail the two above.
+    $store = new DatabaseVectorStore(DB::connection(), new IndexSettings(strategy: IndexSettings::STRATEGY_EXACT));
+    $vector = Vector::of([1.0, 0.0]);
+
+    $store->upsert([
+        new VectorRecord('c', 'explicit', 'x', $vector, 's', ['source_id' => 'doc', 'source_page' => null]),
+        new VectorRecord('c', 'absent', 'y', $vector, 's', ['source_id' => 'doc']),
+    ]);
+
+    $provenances = [];
+
+    foreach ($store->search(new VectorQuery('c', $vector, 's')) as $match) {
+        $provenances[$match->recordId] = Provenance::fromMetadata($match->metadata);
+    }
+
+    expect($provenances['explicit'])->toEqual($provenances['absent'])
+        ->and($provenances['explicit']->page)->toBeNull();
+});
+
+it('treats an explicit null and an absent key as one state in both directions', function (): void {
+    // Stated as the pair it is, so neither direction can drift alone.
+    expect(Provenance::fromMetadata(['source_page' => null]))->toEqual(Provenance::fromMetadata([]))
+        ->and((new Provenance(page: null))->toMetadata())->toBe((new Provenance)->toMetadata());
+});
+
+it('never emits a null value, so the collapse cannot leak back into storage', function (): void {
+    $metadata = (new Provenance(id: 'doc', page: null, offset: null))->toMetadata();
+
+    expect($metadata)->toBe(['source_id' => 'doc'])
+        ->and(array_filter($metadata, static fn (mixed $value): bool => $value === null))->toBe([]);
 });
