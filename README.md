@@ -28,6 +28,11 @@ Prism::text()
     ->asText();
 ```
 
+> **Working on this package?** Read **[`AGENTS.md`](AGENTS.md)** first — the boundary
+> this package has to hold, the gates that must be green, and the traps that have
+> already caught someone.
+> `@link AGENTS.md`
+
 ## Handing a recollection to Prism
 
 **Use `withSystemPrompt($relevant->asContext())`.** Not
