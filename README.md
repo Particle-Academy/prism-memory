@@ -63,6 +63,12 @@ or both.
 
 ## Installation
 
+> **Not on Packagist yet.** Until it is published, point Composer at the repository:
+>
+> ```json
+> { "repositories": [{ "type": "vcs", "url": "https://github.com/Particle-Academy/prism-memory" }] }
+> ```
+
 ```bash
 composer require particle-academy/prism-memory
 php artisan migrate
