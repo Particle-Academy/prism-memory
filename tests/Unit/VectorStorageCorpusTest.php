@@ -17,7 +17,7 @@ use Prism\Memory\ValueObjects\Vector;
 function vectorStorageCorpus(): array
 {
     return json_decode(
-        (string) file_get_contents(__DIR__.'/../fixtures/memory-vector-storage.json'),
+        (string) file_get_contents(__DIR__.'/../Fixtures/memory-vector-storage.json'),
         true,
         512,
         JSON_THROW_ON_ERROR,
