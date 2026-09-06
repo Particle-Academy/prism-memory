@@ -54,4 +54,22 @@ final class UnstorableMemory extends RuntimeException
             .'TypeScript and Python ports. Flatten it, or put it in the content.'
         );
     }
+
+    public static function unfilterableMetadataKey(string $key): self
+    {
+        return new self(
+            "Memory metadata key [{$key}] contains \"->\" or a double quote, and cannot be stored.
+
+"
+            .'A metadata key is used as a JSON PATH when the row is later filtered, not as a bound value. '
+            .'A key containing `->` compiles to a traversal into nesting that flat metadata does not have, '
+            .'so it matches zero rows and reports NOTHING — the caller reads that as "no relevant '
+            .'memories" rather than "this filter is wrong". A double quote produces a malformed path and '
+            .'makes the database raise, which points at the wrong layer.'.'
+
+'
+            .'Refused on the way IN as well as on the way out, because a key that can be written and never '
+            .'filtered on is a row that is silently unreachable.'
+        );
+    }
 }

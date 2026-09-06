@@ -71,6 +71,15 @@ final readonly class VectorRecord
             }
 
             $narrowed[(string) $key] = $value;
+
+            // The key is validated as well as the value, because the key is what
+            // becomes a JSON PATH at query time. Only values were checked here,
+            // so a key containing `->` could be written and then never matched
+            // by any filter — a row stored successfully and silently
+            // unreachable. VectorQuery refuses the same shape on the way out.
+            if (str_contains((string) $key, '->') || str_contains((string) $key, '"')) {
+                throw UnstorableMemory::unfilterableMetadataKey((string) $key);
+            }
         }
 
         $this->metadata = $narrowed;

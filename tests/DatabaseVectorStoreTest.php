@@ -295,6 +295,28 @@ it('refuses nested metadata rather than letting it change JSON type with its con
         ->toThrow(UnstorableMemory::class, 'restricted to scalars');
 });
 
+it('refuses a metadata key that could be written and never filtered on', function (): void {
+    // The write side of prism-memory#1. Only metadata VALUES were validated
+    // here, so a key containing `->` could be stored successfully and then
+    // never matched by any filter -- a row that exists and is unreachable.
+    //
+    // Refused on the way in as well as on the way out, because a guard only at
+    // query time still leaves rows nobody can retrieve.
+    expect(fn (): VectorRecord => record('a', 'hello', metadata: ['a->b' => 'x']))
+        ->toThrow(UnstorableMemory::class, 'cannot be stored');
+
+    expect(fn (): VectorRecord => record('a', 'hello', metadata: ['we"ird' => 'x']))
+        ->toThrow(UnstorableMemory::class, 'cannot be stored');
+});
+
+it('still stores an ordinary metadata key', function (): void {
+    // The control. Without it the guard above passes against a validator that
+    // refuses all metadata, which would be worse than the bug.
+    $stored = record('a', 'hello', metadata: ['topic' => 'billing', 'a.b' => 'ok']);
+
+    expect($stored->metadata)->toBe(['topic' => 'billing', 'a.b' => 'ok']);
+});
+
 it('refuses an object in metadata, which is the harness defect exactly', function (): void {
     expect(fn (): VectorRecord => record('a', 'hello', metadata: ['thing' => new stdClass]))
         ->toThrow(UnstorableMemory::class, 'stdClass');
@@ -446,6 +468,38 @@ it('refuses a query that names no collection at all', function (): void {
 it('refuses a collection name that is not a usable string', function (): void {
     expect(fn (): VectorQuery => new VectorQuery(['handbook', 42], Vector::of([1.0, 0.0]), 'test:space'))
         ->toThrow(InvalidArgumentException::class, 'must be a non-empty string');
+});
+
+it('refuses a metadata filter key that can never match', function (): void {
+    // A filter key becomes a JSON PATH, not a bound value. `metadata->a->b`
+    // compiles to `$."a"."b"` -- a traversal into nesting flat metadata does not
+    // have -- so it matched ZERO ROWS and reported nothing. The caller reads
+    // that as "no relevant memories" rather than "this filter is wrong", which
+    // is the worse answer because it looks like a result.
+    //
+    // Not injection: the value is bound and the key lands inside a
+    // single-quoted string literal, so a quote breaks the JSON path and not the
+    // statement. Refused anyway -- "cannot escape the query" and "does what the
+    // caller asked" are different claims. Reported as prism-memory#1.
+    expect(fn (): VectorQuery => new VectorQuery(
+        'handbook', Vector::of([1.0, 0.0]), 'test:space', 8, ['a->b' => 'x'],
+    ))->toThrow(InvalidArgumentException::class, 'may not contain');
+
+    // The loud half of the same defect: a double quote produces a malformed
+    // path and makes the DATABASE raise, pointing at the wrong layer.
+    expect(fn (): VectorQuery => new VectorQuery(
+        'handbook', Vector::of([1.0, 0.0]), 'test:space', 8, ['we"ird' => 'x'],
+    ))->toThrow(InvalidArgumentException::class, 'may not contain');
+});
+
+it('still accepts an ordinary metadata filter key', function (): void {
+    // The control. Without it the guard above passes against a validator that
+    // refuses every filter, which would be a worse bug than the one being fixed.
+    $query = new VectorQuery(
+        'handbook', Vector::of([1.0, 0.0]), 'test:space', 8, ['topic' => 'billing', 'a.b' => 'ok'],
+    );
+
+    expect($query->filter)->toBe(['topic' => 'billing', 'a.b' => 'ok']);
 });
 
 it('normalises a keyed or gappy collection array into a list', function (): void {
