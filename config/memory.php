@@ -21,6 +21,37 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Are tool results memories?
+    |--------------------------------------------------------------------------
+    |
+    | Yes, by default, and stored VERBATIM.
+    |
+    | This is a claim about workloads rather than a preference. On a real
+    | agentic corpus tool traffic IS the transcript — one consumer measured
+    | tool_result at 82% and tool_call at 11% — so remembering only what was
+    | said in prose optimises the remaining 7%.
+    |
+    | It also matters for a reason beyond recall quality. Provider-side context
+    | clearing (Anthropic's `clear_tool_uses`) deletes tool results from the
+    | model's view and hands back nothing; measured, the agent then REDOES the
+    | work it can no longer see. A store that kept those results verbatim is
+    | what turns that redo into a lookup, so this is the recovery layer that
+    | makes clearing safe rather than merely cheap.
+    |
+    | Shaping belongs on recall, never here: a stored payload can always be
+    | summarised on the way out, and a stored summary can never be
+    | un-summarised. Filter them at recall with `filter: ['kind' => ...]`.
+    |
+    | Turn it off for a workload where tool traffic genuinely is disposable —
+    | a chat assistant calling a weather tool has no use for last week's
+    | forecast payload.
+    |
+    */
+
+    'remember_tool_results' => (bool) env('MEMORY_REMEMBER_TOOL_RESULTS', true),
+
+    /*
+    |--------------------------------------------------------------------------
     | Embeddings
     |--------------------------------------------------------------------------
     |

@@ -53,9 +53,16 @@ use Prism\Prism\ValueObjects\Messages\UserMessage;
  *
  * ## What is stored
  *
- * Observations: text that was said, with its provenance. Not summaries, not
- * extracted facts — see {@see MemoryKind} for why that is a deliberate refusal
- * to answer a question the spec left open rather than an unfinished feature.
+ * Observations — text that was said, with its provenance — and tool results,
+ * stored verbatim. Not summaries, not extracted facts: see {@see MemoryKind}
+ * for why those two remain a deliberate refusal to answer a question the spec
+ * left open, and why tool results no longer are.
+ *
+ * Tool results are on by default, because on a real agentic corpus they are the
+ * overwhelming majority of the transcript — one consumer measured 93% — so a
+ * memory layer that stored only observations would be optimising the remainder.
+ * `rememberToolResults: false` turns them off for a workload where tool traffic
+ * genuinely is disposable, which is the shape a chat assistant has.
  *
  * No model runs in `remember()`, and no model runs in `recall()` beyond the
  * embedding call that semantic search requires by definition. So neither is a
@@ -75,6 +82,7 @@ final class Memory
         private readonly ?int $retentionSeconds = null,
         private readonly int $batchSize = 96,
         private readonly bool $synchronous = false,
+        private readonly bool $rememberToolResults = true,
     ) {}
 
     public function collection(): string
@@ -102,6 +110,7 @@ final class Memory
             retentionSeconds: $this->retentionSeconds,
             batchSize: $this->batchSize,
             synchronous: true,
+            rememberToolResults: $this->rememberToolResults,
         );
     }
 
@@ -121,7 +130,7 @@ final class Memory
         $at = $occurredAt ?? Carbon::now();
 
         foreach ($this->observationsIn($subject) as $observation) {
-            [$content, $role] = $observation;
+            [$content, $role, $kind, $extra] = $observation;
 
             $records[] = new VectorRecord(
                 collection: $this->collection,
@@ -129,13 +138,19 @@ final class Memory
                 // replaces one row rather than accumulating two. A conversation
                 // re-recorded after a retry does not double the store, and a
                 // duplicate cannot occupy a second slot in a recall's results.
-                id: $this->identify($content, $role),
+                //
+                // The tool's name joins the digest for the same reason the role
+                // does: an identical payload returned by two different tools is
+                // two facts about the conversation, and collapsing them loses
+                // which tool said it.
+                id: $this->identify($content, $role, (string) ($extra['tool_name'] ?? '')),
                 content: $content,
                 vector: null,
                 space: $this->embedder->space(),
                 metadata: [
                     ...$metadata,
-                    'kind' => MemoryKind::Observation->value,
+                    ...$extra,
+                    'kind' => $kind->value,
                     'role' => $role,
                 ],
                 occurredAt: $at,
@@ -428,9 +443,9 @@ final class Memory
      * about the conversation — one is a claim, the other is a confirmation —
      * and collapsing them loses which.
      */
-    private function identify(string $content, ?string $role): string
+    private function identify(string $content, ?string $role, string $tool = ''): string
     {
-        return hash('sha256', ($role ?? '').'|'.$content);
+        return hash('sha256', ($role ?? '').'|'.$tool.'|'.$content);
     }
 
     /**
@@ -440,12 +455,13 @@ final class Memory
      * application wrote, not something that happened, and remembering it would
      * feed the model its own instructions back as recalled context.
      *
-     * Tool results are skipped too, and that one is a genuinely open question
-     * rather than a settled call — a tool result is often the most factual
-     * thing in a turn, and it is also structured data whose useful form is
-     * probably not the raw payload. It is left out because storing it badly is
-     * worse than not storing it, and it is recorded in the README as a decision
-     * waiting on the same answer as summaries and facts.
+     * Tool results ARE remembered now, verbatim. They were withheld on the
+     * grounds that a tool result is structured data whose useful form is
+     * probably not the raw payload, and that storing it badly is worse than not
+     * storing it — but that only forces a choice if the shape has to be picked
+     * at WRITE time, and it does not. See {@see toolResultsIn()} and
+     * {@see MemoryKind::ToolResult} for what settled it, and
+     * `rememberToolResults` for turning it off.
      *
      * `->content` and not `->text()`. `UserMessage::__construct` appends a
      * `Text` part built from `content`, and `text()` concatenates every part —
@@ -455,26 +471,37 @@ final class Memory
      * messages in `prism-harness`, met from a different direction.
      *
      * @param  iterable<Message|string>|Message|string  $subject
-     * @return list<array{0: string, 1: string|null}>
+     * @return list<array{0: string, 1: string|null, 2: MemoryKind, 3: array<string, scalar|null>}>
      */
     private function observationsIn(iterable|Message|string $subject): array
     {
         if (is_string($subject)) {
-            return trim($subject) === '' ? [] : [[$subject, null]];
+            return trim($subject) === '' ? [] : [[$subject, null, MemoryKind::Observation, []]];
         }
 
         $messages = $subject instanceof Message ? [$subject] : $subject;
         $observations = [];
 
         foreach ($messages as $message) {
+            if ($message instanceof ToolResultMessage) {
+                foreach ($this->toolResultsIn($message) as $result) {
+                    $observations[] = $result;
+                }
+
+                continue;
+            }
+
             $observation = match (true) {
                 is_string($message) => [$message, null],
                 $message instanceof UserMessage => [$message->content, 'user'],
                 $message instanceof AssistantMessage => [$message->content, 'assistant'],
-                // Skipped, for the reasons above. Named rather than falling
-                // through to the refusal, so that adding a fifth message type
-                // to Prism is a failure here and not a silent omission.
-                $message instanceof SystemMessage, $message instanceof ToolResultMessage => null,
+                // Still skipped, and still named rather than falling through to
+                // the refusal, so that adding a message type to Prism is a
+                // failure here and not a silent omission. A system prompt is
+                // configuration the application wrote, not something that
+                // happened, and remembering it would feed the model its own
+                // instructions back as recalled context.
+                $message instanceof SystemMessage => null,
                 // Anything else is refused rather than dropped. Storing nothing
                 // and returning successfully is the shape of failure this
                 // package is worst at detecting later: the caller believes a
@@ -487,9 +514,86 @@ final class Memory
                 continue;
             }
 
-            $observations[] = $observation;
+            $observations[] = [...$observation, MemoryKind::Observation, []];
         }
 
         return $observations;
+    }
+
+    /**
+     * Every tool result in one message, stored as it came back.
+     *
+     * VERBATIM, and that is the whole design. The reason this was withheld was
+     * that a tool result is "structured data whose useful form is probably not
+     * the raw payload" — but that only forces a choice if the shape has to be
+     * picked at WRITE time. It does not. A stored payload can always be
+     * summarised on the way out; a stored summary can never be un-summarised,
+     * so the lossless form is the one to keep and recall is where shaping
+     * belongs.
+     *
+     * An ERROR is still a tool result. It is flagged in metadata rather than
+     * dropped, because the rows that explain what went wrong are exactly the
+     * ones a store that assumed well-formed payloads would discard.
+     *
+     * @return list<array{0: string, 1: string|null, 2: MemoryKind, 3: array<string, scalar|null>}>
+     */
+    private function toolResultsIn(ToolResultMessage $message): array
+    {
+        if (! $this->rememberToolResults) {
+            return [];
+        }
+
+        $results = [];
+
+        foreach ($message->toolResults as $result) {
+            $content = $this->payload($result->result);
+
+            if (trim($content) === '') {
+                continue;
+            }
+
+            $results[] = [
+                $content,
+                'tool',
+                MemoryKind::ToolResult,
+                [
+                    // The tool's name, so a recall can be narrowed to one tool
+                    // without parsing the payload back out of the content.
+                    'tool_name' => $result->toolName,
+                    'tool_call_id' => $result->toolCallId,
+                    // Whether the payload is structured. A consumer measuring
+                    // their own corpus found 371 of 375 structured and none
+                    // prose, which is what makes a DETERMINISTIC projection the
+                    // right first tool for shaping these on recall — no
+                    // generative call, and no field silently dropped.
+                    'structured' => is_array($result->result),
+                ],
+            ];
+        }
+
+        return $results;
+    }
+
+    /**
+     * A tool result as storable text, whatever shape it arrived in.
+     *
+     * `result` is `int|float|string|array|null`, so all four have to land
+     * somewhere. Arrays are encoded rather than flattened: flattening would
+     * decide the useful form here, at write time, which is the decision this
+     * whole design exists to defer to recall.
+     *
+     * @param  array<mixed>|int|float|string|null  $result
+     */
+    private function payload(int|float|string|array|null $result): string
+    {
+        if ($result === null) {
+            return '';
+        }
+
+        if (is_array($result)) {
+            return (string) json_encode($result);
+        }
+
+        return (string) $result;
     }
 }

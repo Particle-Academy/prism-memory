@@ -265,6 +265,44 @@ set stays attributable:
 $store->search(new VectorQuery(['handbook', 'contracts'], $vector, $space));
 ```
 
+### Tool results are memories
+
+`remember($response->messages)` stores tool results alongside the prose, **verbatim**, and it does
+so by default.
+
+That default is a claim about workloads rather than a preference. On a real agentic corpus tool
+traffic *is* the transcript — one consumer measured `tool_result` at 82% and `tool_call` at 11% — so
+remembering only what was said in prose optimises the remaining 7%.
+
+Verbatim matters for a second reason that has nothing to do with recall quality. Provider-side
+context clearing (Anthropic's `clear_tool_uses`) deletes tool results from the model's view and
+hands back nothing. Measured, an agent that loses its tool history **redoes the work it can no
+longer see** — turns roughly double even at a conservative `keep: 3`. A store that kept those
+results is what turns that redo into a lookup, so this is the recovery layer that makes clearing
+*safe* rather than merely cheap. Clearing without recovery and storage without clearing each have
+half the answer.
+
+Shaping belongs on recall, never on write — **a stored payload can always be summarised on the way
+out, and a stored summary can never be un-summarised.** Filter by kind:
+
+```php
+$memory->recall('where do I live?', filter: ['kind' => 'observation']);   // prose only
+$memory->recall('what did the lookup return?', filter: ['tool_name' => 'lookup']);
+```
+
+Each tool-result memory carries `kind`, `tool_name`, `tool_call_id` and `structured` in its
+metadata, so a recall can be narrowed without parsing the payload back out of the content.
+
+**A result that is an error is still a tool result** and is stored as one. A store that assumed
+payloads were well-formed would reject exactly the rows that explain what went wrong.
+
+Turn it off for a workload where tool traffic genuinely is disposable — a chat assistant calling a
+weather tool has no use for last week's forecast payload:
+
+```php
+'remember_tool_results' => false,
+```
+
 ### When you outgrow it
 
 Two routes, and the second is the general one.
@@ -430,10 +468,11 @@ These are not gaps. They are decisions that bind the ecosystem, and
 [decision 0008](https://github.com/Particle-Academy/prism-parity/blob/specs/ecosystem-packages/docs/decisions/0008-consensus-among-agents.md)
 says an agent that finds an open question in its spec raises it rather than resolving it privately.
 
-**What is stored — turns, summaries, or extracted facts?** This slice stores **observations**: text
-that was said, with its provenance. That is the substrate all three candidate answers share, so
-nothing stored today has to move when the question is answered. `MemoryKind` has exactly one case
-for that reason — adding `Summary` and `Fact` before the decision would settle it by accident.
+**What is stored — turns, summaries, or extracted facts?** This slice stores **observations** (text
+that was said, with its provenance) and **tool results** (stored verbatim). Both are text that was
+produced rather than derived, which is the substrate all three candidate answers share, so nothing
+stored today has to move when the question is answered. `MemoryKind` still has no `Summary` or
+`Fact` — adding them before the decision would settle it by accident.
 
 **Does recall ever run a model?** Today: no, beyond the embedding call semantic search requires by
 definition. Neither `remember()` nor `recall()` is a billable *generative* operation, and if that
@@ -444,9 +483,9 @@ one is a compliance problem waiting to be found by somebody else. What is open i
 *means* for derived memories — a summary containing a fact whose source was erased — and that
 cannot be answered before the first question is.
 
-**Tool results** are currently not remembered, and that is part of the first question rather than a
-separate one. A tool result is often the most factual thing in a turn; it is also structured data
-whose useful memory form is probably not the raw payload.
+**Tool results** are now remembered, verbatim — see [below](#tool-results-are-memories). That was
+the one part of the first question that could be answered without answering the rest, and the answer
+came from measurement rather than taste.
 
 ## Findings against `prism` core
 

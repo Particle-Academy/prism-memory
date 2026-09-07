@@ -76,7 +76,24 @@ class PrismMemory
             defaults: $this->recallSettings(),
             retentionSeconds: $this->retentionSeconds(),
             batchSize: $this->batchSize(),
+            rememberToolResults: $this->rememberToolResults(),
         );
+    }
+
+    /**
+     * Whether a tool result is a memory.
+     *
+     * ON by default, and that is a claim about workloads rather than a
+     * preference. On a real agentic corpus tool traffic is the transcript --
+     * one consumer measured tool_result at 82% and tool_call at 11% -- so a
+     * memory layer storing only what was said in prose is optimising the
+     * remaining 7%. A chat assistant whose tool calls genuinely are disposable
+     * turns it off, and the fact that it had to is the record that somebody
+     * decided.
+     */
+    protected function rememberToolResults(): bool
+    {
+        return (bool) ($this->config['remember_tool_results'] ?? true);
     }
 
     /**

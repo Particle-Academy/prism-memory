@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Prism\Memory\Contracts\Embedder;
 use Prism\Memory\Contracts\TokenCounter;
+use Prism\Memory\Enums\MemoryKind;
 use Prism\Memory\Jobs\EmbedMemories;
 use Prism\Memory\PrismMemory;
 use Prism\Memory\Stores\VectorStoreManager;
@@ -24,6 +25,27 @@ use Tests\Fixtures\Owner;
 function memory(?string $scope = null)
 {
     return app(PrismMemory::class)->for(Owner::create(['name' => 'Ada']), $scope)->synchronously();
+}
+
+/**
+ * A memory built on overridden config.
+ *
+ * `PrismMemory` is a singleton and reads config at construction, so setting a
+ * key after the container has resolved it changes nothing. Forgetting the
+ * instance is what makes the override actually take -- without it this helper
+ * would return the DEFAULT memory and the test would pass for the wrong reason.
+ *
+ * @param  array<string, mixed>  $config
+ */
+function memoryWith(array $config)
+{
+    foreach ($config as $key => $value) {
+        config()->set('memory.'.$key, $value);
+    }
+
+    app()->forgetInstance(PrismMemory::class);
+
+    return memory();
 }
 
 /*
@@ -55,12 +77,80 @@ it('skips the system prompt, which is configuration rather than something said',
     expect($memory->count())->toBe(0);
 });
 
-it('skips tool results, and that is an open question rather than a settled one', function (): void {
-    // A tool result is often the most factual thing in a turn. It is also
-    // structured data whose useful memory form is probably not the raw payload,
-    // and storing it badly is worse than not storing it. Recorded in the README
-    // as waiting on the same answer as summaries and facts.
-    $memory = memory();
+it('remembers a tool result verbatim, with the tool that produced it', function (): void {
+    // Withheld until now on the grounds that a tool result is structured data
+    // whose useful form is probably not the raw payload. That only forces a
+    // choice if the shape is picked at WRITE time — so the payload is stored as
+    // it came and shaping belongs on recall.
+    $memory = memory()->synchronously();
+
+    $memory->remember([new ToolResultMessage([
+        new ToolResult('call-1', 'searchKnowledge', [], ['results' => [['title' => 'Elm Row']]]),
+    ])]);
+
+    $recalled = $memory->recall('Elm Row')->all();
+
+    expect($memory->count())->toBe(1)
+        ->and($recalled[0]->content)->toBe('{"results":[{"title":"Elm Row"}]}')
+        ->and($recalled[0]->kind)->toBe(MemoryKind::ToolResult);
+});
+
+it('stores a tool result that is an error, because that is still a tool result', function (): void {
+    // A consumer's corpus carried four of these out of 375 — a tool throwing
+    // against a column a migration had not created. A store that assumed
+    // payloads were well-formed would reject exactly the rows that explain what
+    // went wrong.
+    $memory = memory()->synchronously();
+
+    $memory->remember([new ToolResultMessage([
+        new ToolResult('call-1', 'migrate', [], 'SQLSTATE[42703]: Undefined column'),
+    ])]);
+
+    $recalled = $memory->recall('undefined column')->all();
+
+    expect($memory->count())->toBe(1)
+        ->and($recalled[0]->content)->toContain('Undefined column')
+        ->and($recalled[0]->kind)->toBe(MemoryKind::ToolResult);
+});
+
+it('lets a recall exclude tool results, which is where shaping belongs', function (): void {
+    // The filter-on-read half. Storing verbatim only pays off if a caller who
+    // does not want the payloads can say so without them having been dropped on
+    // write, because a stored payload can be summarised on the way out and a
+    // stored summary can never be un-summarised.
+    $memory = memory()->synchronously();
+
+    $memory->remember([
+        new UserMessage('Where do I live?'),
+        new ToolResultMessage([new ToolResult('call-1', 'lookup', [], ['address' => '4 Elm Row'])]),
+    ]);
+
+    $everything = $memory->recall('Elm Row')->all();
+    $prose = $memory->recall('Elm Row', filter: ['kind' => 'observation'])->all();
+
+    expect($everything)->toHaveCount(2)
+        ->and($prose)->toHaveCount(1)
+        ->and($prose[0]->kind)->toBe(MemoryKind::Observation);
+});
+
+it('keeps an identical payload from two different tools as two memories', function (): void {
+    // The tool's name is in the digest for the same reason the role is: the
+    // same bytes returned by two tools are two facts about the conversation,
+    // and collapsing them loses which tool said it.
+    $memory = memory()->synchronously();
+
+    $memory->remember([new ToolResultMessage([
+        new ToolResult('call-1', 'getKnowledge', [], ['v' => 1]),
+        new ToolResult('call-2', 'searchKnowledge', [], ['v' => 1]),
+    ])]);
+
+    expect($memory->count())->toBe(2);
+});
+
+it('can be told tool traffic is disposable, for a workload where it is', function (): void {
+    // A chat assistant calling a weather tool has no use for last week's
+    // forecast payload. Off is a decision an application makes, not the default.
+    $memory = memoryWith(['remember_tool_results' => false]);
 
     $memory->remember([new ToolResultMessage([new ToolResult('call-1', 'lookup', [], 'result')])]);
 
