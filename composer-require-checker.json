@@ -1,3 +1,6 @@
 {
-    "symbol-whitelist": []
+    "symbol-whitelist": [
+        "Prism\\Harness\\Contracts\\ContextRecall",
+        "Prism\\Harness\\Contracts\\EvictionSink"
+    ]
 }

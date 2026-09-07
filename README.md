@@ -323,7 +323,44 @@ weather tool has no use for last week's forecast payload:
 'remember_tool_results' => false,
 ```
 
-### When you outgrow it
+### Memory as the harness's recovery layer
+
+`prism-harness` compacts a conversation and hands what leaves the window to an
+`EvictionSink`; bind memory as that sink and the detail stays reachable by
+meaning rather than being gone.
+
+```php
+// A service provider in your app — both packages installed.
+$this->app->singleton(EvictionSink::class, fn () => new MemoryEvictionSink(
+    app(PrismMemory::class),
+    $owner,
+));
+
+$this->app->singleton(ContextRecall::class, fn () => new MemoryContextRecall(
+    app(PrismMemory::class),
+    $owner,
+));
+```
+
+The agent then gets a bounded `recall_context` tool, and `recall()`'s token
+budget is what keeps a lookup from re-expanding the window compaction just
+shrank.
+
+**This is what makes clearing safe rather than merely cheap.** Provider-side
+clearing and summarising compaction both drop detail and hand back nothing; a
+store that kept it turns the agent's next question into a lookup instead of a
+guess. Measured, an agent that cannot see its own history will assert things it
+cannot support — one asserted a total from evidence already cleared and was
+right only by coincidence.
+
+**Optional in both directions.** `prism-harness` is a `require-dev` dependency
+here and nothing in this package resolves these classes, so an installation with
+only memory never loads them. The harness does not depend on memory either — it
+ships the contracts and a sink that discards.
+
+`src/Harness/`.
+
+## When you outgrow it
 
 Two routes, and the second is the general one.
 
