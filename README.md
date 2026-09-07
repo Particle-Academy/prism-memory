@@ -3,11 +3,6 @@
 Persistent context and semantic recall for Laravel — vector storage, `remember`/`recall`, and
 token-budget-aware retrieval on top of [Prism](https://github.com/Particle-Academy/prism).
 
-> **Status: the first slice works end to end.** A vector store, a `remember`/`recall` pair, one
-> storage driver, queued batch embedding, and forgetting. **Three questions are deliberately
-> unanswered** — what gets stored, whether recall ever runs a model, and what forgetting means for
-> derived memories. They are open on purpose and recorded below rather than settled quietly.
-
 An agent's useful context outgrows its context window. `prism-harness` gives a conversation a
 thread, and a thread replayed whole is the crudest possible memory: it grows without bound, costs
 tokens linearly, and eventually stops fitting. This stores what was said and retrieves **only the
