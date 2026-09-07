@@ -59,15 +59,17 @@ enum MemoryKind: string
      * model's view and hands back nothing, so without a store that kept them the
      * detail is simply gone.
      *
-     * The SYMPTOM of that is workload-dependent and the two measurements we have
-     * disagree about it. On short support conversations the agent redoes what it
-     * cannot see and turns roughly double. On a long audit sweep turns went DOWN
-     * four-fold and the agent refused to finish, because it could not stand
-     * behind counts whose evidence had been cleared — having already asserted one
-     * from a cleared result and caught itself. Repeating work costs money;
-     * reporting a number you can no longer support is worse.
+     * The SYMPTOM is workload-dependent. On short support conversations the agent
+     * redoes what it cannot see and turns roughly double. On a long audit sweep
+     * it asserted a total from a cleared result and caught itself only by
+     * coincidence. Repeating work costs money; reporting a number you can no
+     * longer support is worse.
      *
-     * What generalises is the cause, not the magnitude.
+     * A stronger claim from that second workload — that clearing the DATA made
+     * the agent abandon the task — did not survive a re-run: with the agent's
+     * rules exempted it cleared six times more data and finished. Its own
+     * explanation for stopping blamed the data and was wrong. An agent's account
+     * of why it failed is evidence about behaviour, not about cause.
      *
      * A result that is an ERROR is still a tool result and is stored as one. The
      * consumer above found four such rows in their corpus, from a tool throwing

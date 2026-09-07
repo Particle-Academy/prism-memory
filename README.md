@@ -284,14 +284,19 @@ symptom while agreeing about the cause:
 
 - On short retail-support conversations, the agent **redoes** what it can no longer see — turns
   roughly doubled.
-- On a long audit sweep, turns went **down** four-fold and the agent **refused to finish**, because
-  it could not stand behind counts whose evidence had been cleared. It had already asserted one
-  total from a cleared result and caught itself: *"It happens to be correct — I've now re-verified
-  it — but I shouldn't have said it."*
+- On a long audit sweep, the agent asserted a total from a cleared result and caught itself:
+  *"It happens to be correct — I've now re-verified it — but I shouldn't have said it."* One
+  coincidence from a confidently wrong number, with no error and no log line had it gone the
+  other way.
 
-Repeating work costs money. Reporting a number you can no longer support is worse, and the second
-workload came one coincidence away from it. **Do not gate this on tokens saved** — measured that
-way the audit run looked like a 95% win while preventing the task from completing.
+Repeating work costs money. Reporting a number you can no longer support is worse.
+
+**A stronger claim was made from that second run and did not survive.** The agent also abandoned
+the task, and its own explanation was that its counts would be "recollection" — a story about lost
+data. Re-run with the agent's *rules* exempted from clearing, it cleared **six times more data**
+and finished. Clearing the data was survivable; clearing the rules was not. **An agent's account of
+why it failed is evidence about the behaviour, not about the cause** — and if your agent loads its
+operating rules through a tool, compaction eats the rules before it eats the data.
 
 A store that kept those results is what turns both symptoms into a lookup, so this is the recovery
 layer that makes clearing *safe* rather than merely cheap. Clearing without recovery and storage
