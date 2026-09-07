@@ -276,11 +276,26 @@ remembering only what was said in prose optimises the remaining 7%.
 
 Verbatim matters for a second reason that has nothing to do with recall quality. Provider-side
 context clearing (Anthropic's `clear_tool_uses`) deletes tool results from the model's view and
-hands back nothing. Measured, an agent that loses its tool history **redoes the work it can no
-longer see** — turns roughly double even at a conservative `keep: 3`. A store that kept those
-results is what turns that redo into a lookup, so this is the recovery layer that makes clearing
-*safe* rather than merely cheap. Clearing without recovery and storage without clearing each have
-half the answer.
+hands back nothing, and **an agent that notices it has lost work it depended on does not fail
+gracefully.**
+
+What it does instead depends on the workload, and the two measurements we have disagree about the
+symptom while agreeing about the cause:
+
+- On short retail-support conversations, the agent **redoes** what it can no longer see — turns
+  roughly doubled.
+- On a long audit sweep, turns went **down** four-fold and the agent **refused to finish**, because
+  it could not stand behind counts whose evidence had been cleared. It had already asserted one
+  total from a cleared result and caught itself: *"It happens to be correct — I've now re-verified
+  it — but I shouldn't have said it."*
+
+Repeating work costs money. Reporting a number you can no longer support is worse, and the second
+workload came one coincidence away from it. **Do not gate this on tokens saved** — measured that
+way the audit run looked like a 95% win while preventing the task from completing.
+
+A store that kept those results is what turns both symptoms into a lookup, so this is the recovery
+layer that makes clearing *safe* rather than merely cheap. Clearing without recovery and storage
+without clearing each hold half the answer.
 
 Shaping belongs on recall, never on write — **a stored payload can always be summarised on the way
 out, and a stored summary can never be un-summarised.** Filter by kind:

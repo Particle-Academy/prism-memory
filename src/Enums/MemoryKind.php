@@ -57,9 +57,17 @@ enum MemoryKind: string
      * Verbatim is the point. This is the recovery layer that makes provider-side
      * context clearing safe: `clear_tool_uses` deletes tool results from the
      * model's view and hands back nothing, so without a store that kept them the
-     * detail is simply gone. Measured behaviourally, an agent that loses its tool
-     * history REDOES the work — turns roughly double even at a conservative
-     * `keep: 3` — and a recovery layer is what turns that redo into a lookup.
+     * detail is simply gone.
+     *
+     * The SYMPTOM of that is workload-dependent and the two measurements we have
+     * disagree about it. On short support conversations the agent redoes what it
+     * cannot see and turns roughly double. On a long audit sweep turns went DOWN
+     * four-fold and the agent refused to finish, because it could not stand
+     * behind counts whose evidence had been cleared — having already asserted one
+     * from a cleared result and caught itself. Repeating work costs money;
+     * reporting a number you can no longer support is worse.
+     *
+     * What generalises is the cause, not the magnitude.
      *
      * A result that is an ERROR is still a tool result and is stored as one. The
      * consumer above found four such rows in their corpus, from a tool throwing
