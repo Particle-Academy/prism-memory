@@ -172,6 +172,45 @@ return [
             ],
         ],
 
+        /*
+         | Postgres + pgvector. Genuinely sublinear: HNSW walks a graph instead
+         | of ranking every row, so this is where a collection goes when it
+         | outgrows the ceiling described above.
+         |
+         | Two setup steps, and neither is optional:
+         |
+         |   php artisan vendor:publish --tag=memory-pgvector-migrations
+         |   php artisan migrate
+         |
+         | The migration runs `CREATE EXTENSION IF NOT EXISTS vector`, which
+         | needs a role permitted to install extensions. On a managed Postgres
+         | — and on some local ones — the application's role is NOT, and the
+         | error arrives at migrate time rather than at first search.
+         |
+         | `dimensions` MUST match the embedding model, because pgvector indexes
+         | a fixed-width column: 1536 for text-embedding-3-small, 3072 for
+         | -large. A record of another width is refused by name on write.
+         |
+         | `ef_search` is the HNSW candidate list size — the recall/latency dial.
+         | Higher finds more of the true neighbours and costs more. Results are
+         | APPROXIMATE nearest neighbours; the similarity on each match is a real
+         | cosine of a vector it did find.
+         |
+         | THIS IS NOT THE ONLY WAY OFF THE DATABASE DRIVER. Qdrant, Pinecone,
+         | Weaviate, Milvus or something bespoke go through
+         | `VectorStoreManager::extend()`, which takes any implementation of the
+         | VectorStore contract and is resolved ahead of this list. pgvector is
+         | built in only because it needs no infrastructure an application does
+         | not already run.
+         */
+        'pgvector' => [
+            'driver' => 'pgvector',
+            'connection' => env('MEMORY_PGVECTOR_CONNECTION'),
+            'table' => 'memory_vectors_pgvector',
+            'dimensions' => (int) env('MEMORY_PGVECTOR_DIMENSIONS', 1536),
+            'ef_search' => (int) env('MEMORY_PGVECTOR_EF_SEARCH', 100),
+        ],
+
     ],
 
 ];

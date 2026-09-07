@@ -122,6 +122,19 @@ class VectorStoreManager
                 index: IndexSettings::fromArray(is_array($driver['index'] ?? null) ? $driver['index'] : []),
                 table: (string) ($driver['table'] ?? 'memory_vectors'),
             ),
+            // Built in because it needs no infrastructure an application does
+            // not already run, which makes it the cheapest first step off the
+            // portable driver. It is NOT privileged over `extend()` — a store
+            // registered there is resolved by the branch above this one, and
+            // Qdrant, Pinecone, Weaviate or something bespoke arrive that way
+            // on equal terms.
+            'pgvector' => new PgVectorStore(
+                connection: $this->container->make(DatabaseManager::class)
+                    ->connection($driver['connection'] ?? null),
+                dimensions: (int) ($driver['dimensions'] ?? 1536),
+                table: (string) ($driver['table'] ?? 'memory_vectors_pgvector'),
+                efSearch: (int) ($driver['ef_search'] ?? 100),
+            ),
             default => throw UnsafeMemoryConfiguration::unknownDriver($name),
         };
     }

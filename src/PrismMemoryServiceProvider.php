@@ -70,6 +70,15 @@ class PrismMemoryServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__.'/../database/migrations' => database_path('migrations'),
             ], 'memory-migrations');
+
+            // Publishable ONLY. This one needs Postgres and the `vector`
+            // extension, so loading it the way the portable migration is loaded
+            // would fail the first `migrate` on the SQLite database a fresh
+            // Laravel app ships with — for every installation that never asked
+            // for pgvector.
+            $this->publishes([
+                __DIR__.'/../database/migrations-pgvector' => database_path('migrations'),
+            ], 'memory-pgvector-migrations');
         }
     }
 }

@@ -265,13 +265,58 @@ set stays attributable:
 $store->search(new VectorQuery(['handbook', 'contracts'], $vector, $space));
 ```
 
-Register a real vector database when you outgrow it:
+### When you outgrow it
+
+Two routes, and the second is the general one.
+
+**pgvector ships with the package.** Postgres and the `vector` extension, nothing
+else — no service an application does not already run, which is why this one is
+built in rather than left to you:
 
 ```php
-app(VectorStoreManager::class)->extend('pgvector', fn ($config, $app) => new PgVectorStore(...));
+// config/memory.php
+'store' => 'pgvector',
+'drivers' => [
+    'pgvector' => [
+        'driver' => 'pgvector',
+        'dimensions' => 1536,   // must match the embedding model
+    ],
+],
 ```
 
-`prism-rag` resolves the same store through the same manager, so that is one registration for both.
+```sh
+php artisan vendor:publish --tag=memory-pgvector-migrations
+php artisan migrate
+```
+
+The migration runs `CREATE EXTENSION IF NOT EXISTS vector`, which needs a role
+permitted to install extensions — **on a managed Postgres the application's role
+frequently is not**, and you will find out at migrate time. It creates a separate
+table from `memory_vectors`, so publishing it cannot disturb memories you already
+have.
+
+Search here is genuinely sublinear: HNSW walks a graph rather than ranking every
+row. It returns **approximate** nearest neighbours — `ef_search` is the
+recall/latency dial — and the similarity on each match is a real cosine of a
+vector it did find. Note that pgvector stores single-precision floats, so scores
+differ in the last places from the database driver's.
+
+**Anything else goes through `extend()`**, which is not a lesser path — it is
+resolved ahead of the built-in drivers:
+
+```php
+app(VectorStoreManager::class)->extend('qdrant', fn ($config, $app) => new QdrantStore(...));
+```
+
+Implement [`VectorStore`](src/Contracts/VectorStore.php) — eight methods — and
+Qdrant, Pinecone, Weaviate, Milvus or something bespoke resolve exactly like the
+shipped ones. The contract documents what a correct implementation owes,
+including the absent-versus-null metadata rule that a port gets wrong first.
+[`tests/PgVectorStoreTest.php`](tests/PgVectorStoreTest.php) is a worked example
+of what to hold a new store to.
+
+`prism-rag` resolves the same store through the same manager, so that is one
+registration for both.
 
 **A store that reports itself volatile is refused**, loudly, at resolve time. `prism-harness` makes
 the same check, and memory's version of the mistake is quieter still: a flushed memory store does
@@ -309,15 +354,17 @@ Recall@8 against an exhaustive search, over 1000 memories whose true neighbours 
 Recorded here rather than left for a green tick to be over-read.
 
 - **This is not sublinear.** The ranking pass reads one small row per memory in the collection.
-  Past roughly twenty thousand memories in a single collection, register a real vector database.
-  Collections are per-owner-per-scope, so that ceiling is further away than it sounds.
+  Past roughly twenty thousand memories in a single collection, switch to the `pgvector` driver or
+  register your own. Collections are per-owner-per-scope, so that ceiling is further away than it
+  sounds.
 - **Bucketed LSH was tried and rejected**, with numbers. The probability two vectors agree on one
   random hyperplane is `1 - θ/π`, and text embeddings put genuinely relevant pairs at a cosine
   around 0.4–0.6. Requiring a band of bits to agree is that raised to the width of the band:
   6 bands × 12 bits reads 1.9% of rows and recalls **18%**; loosening to 6 × 6 recalls 87% and
   reads **66%** of the collection, which is a full scan wearing an index's clothes. There is no
   setting that is both bounded and correct. Sublinear search over embeddings needs HNSW or IVF,
-  which needs a real vector database — which is what the store contract is an interface for.
+  which needs a real vector database — which is what the store contract is an interface for, and
+  what the `pgvector` driver above is one implementation of.
 - **The recall figures above come from synthetic clustered vectors**, not from a real embedding
   model over real text. The shape of the curve should hold; the exact percentages are not a
   promise about your corpus.

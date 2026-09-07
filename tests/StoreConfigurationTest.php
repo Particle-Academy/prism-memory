@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\DB;
 use Prism\Memory\Contracts\VectorStore;
+use Prism\Memory\Enums\Durability;
 use Prism\Memory\Exceptions\UnsafeMemoryConfiguration;
 use Prism\Memory\PrismMemory;
 use Prism\Memory\Stores\DatabaseVectorStore;
+use Prism\Memory\Stores\PgVectorStore;
 use Prism\Memory\Stores\VectorStoreManager;
 use Prism\Memory\Support\BinarySignature;
 use Prism\Memory\Support\IndexSettings;
@@ -135,4 +137,30 @@ it('lets an application register a real vector database', function (): void {
         ->store();
 
     expect($store)->toBe($registered);
+});
+
+it('resolves the built-in pgvector driver from configuration alone', function (): void {
+    // The manager's `make()` gained a branch, and a branch nothing resolves is
+    // a driver that exists in the config comments and not in the container.
+    // Constructing the store opens no connection, so this needs no Postgres.
+    $store = manager(['store' => 'pgvector'])->store();
+
+    expect($store)->toBeInstanceOf(PgVectorStore::class)
+        ->and($store->durability())->toBe(Durability::Durable);
+});
+
+it('keeps extend() ahead of the built-in drivers, so bring-your-own always wins', function (): void {
+    // The guarantee that pgvector is a convenience rather than a privileged
+    // path: registering your own store under a shipped driver's NAME must
+    // resolve to yours. If the match statement were consulted first, an
+    // application could not replace a driver we happen to ship, and every
+    // future built-in would silently narrow what `extend()` can do.
+    $mine = new VolatileVectorStore;
+
+    $store = manager(['store' => 'pgvector', 'require_durable' => false])
+        ->extend('pgvector', fn (): VectorStore => $mine)
+        ->store();
+
+    expect($store)->toBe($mine)
+        ->and($store)->not->toBeInstanceOf(PgVectorStore::class);
 });
