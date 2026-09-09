@@ -9,6 +9,8 @@ tokens linearly, and eventually stops fitting. This stores what was said and ret
 parts that matter now**.
 
 ```php
+use Prism\Memory\Facades\PrismMemory;
+
 $memory = PrismMemory::for($user, scope: 'support');
 
 $memory->remember($response->messages);
