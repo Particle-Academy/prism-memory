@@ -112,6 +112,19 @@ function pgvRecord(string $id, string $content, ?Vector $vector = null, array $m
 
 beforeEach(function (): void {
     if (! pgvAvailable()) {
+        // A skip is the right answer on a machine with no Postgres and the
+        // WRONG one in a job whose entire purpose is to run this file: it would
+        // report green having asserted nothing about the driver it names. CI
+        // sets MEMORY_PGVECTOR_REQUIRED, so a service that failed to come up is
+        // a failure rather than a silent pass.
+        if (env('MEMORY_PGVECTOR_REQUIRED')) {
+            throw new RuntimeException(
+                'MEMORY_PGVECTOR_REQUIRED is set but MEMORY_PGVECTOR_DSN is not, so the pgvector suite '
+                .'would have skipped in a run that exists to execute it. Failing instead: a green skip '
+                .'here is indistinguishable from a driver that works.'
+            );
+        }
+
         $this->markTestSkipped('MEMORY_PGVECTOR_DSN is not set — the pgvector driver was NOT exercised.');
     }
 
@@ -269,4 +282,39 @@ it('purges a whole collection and reports the count', function (): void {
 
 it('declares itself durable', function (): void {
     expect(pgvStore()->durability())->toBe(Durability::Durable);
+});
+
+it('applies the configured ef_search to the search, rather than issuing it where it cannot apply', function (): void {
+    $connection = DB::connection('pgvector');
+
+    (new PgVectorStore($connection, PGV_DIMENSIONS, 'memory_vectors_pgvector_test'))
+        ->upsert([pgvRecord('a', 'anything', Vector::of([1.0, 0.0, 0.0]))]);
+
+    // Read the setting DURING the store's own query. Postgres reverts a
+    // SET LOCAL when the transaction ends, so nothing observed afterwards can
+    // tell "it applied and reverted" from "it was discarded" — the two states
+    // this test exists to separate. A listener fires while the statement's
+    // transaction is still open, which is the only moment they differ.
+    $observed = null;
+    $reading = false;
+
+    $connection->listen(function ($query) use ($connection, &$observed, &$reading): void {
+        if ($reading || ! str_contains($query->sql, 'similarity')) {
+            return;
+        }
+
+        $reading = true;
+        $observed = (int) $connection->select("SELECT current_setting('hnsw.ef_search') as v")[0]->v;
+        $reading = false;
+    });
+
+    (new PgVectorStore($connection, PGV_DIMENSIONS, 'memory_vectors_pgvector_test', efSearch: 77))
+        ->search(new VectorQuery(['c'], Vector::of([1.0, 0.0, 0.0]), 'test:space'));
+
+    // 77 is what this store was told to use. 40 is pgvector's own default —
+    // what the database falls back to when `SET LOCAL` is issued outside a
+    // transaction block, where Postgres warns and discards it. That was this
+    // driver's behaviour until the search was wrapped in a transaction: the
+    // efSearch parameter was documented, accepted, and silently ignored.
+    expect($observed)->toBe(77);
 });

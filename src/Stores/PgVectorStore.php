@@ -126,21 +126,33 @@ final class PgVectorStore implements VectorStore
             );
         }
 
-        // Per-session, not per-connection: a pooled connection carrying a
-        // previous caller's ef_search would make recall depend on who ran last.
-        $this->connection->statement('SET LOCAL hnsw.ef_search = '.$this->efSearch);
-
         $target = $this->literal($query->vector);
 
-        // `<=>` is cosine DISTANCE, so 1 - it is the similarity. Ordering by the
-        // operator rather than by the computed column is what lets the planner
-        // use the HNSW index; ordering by `similarity DESC` does not.
-        $rows = $this->readable($query)
-            ->selectRaw('collection, record_id, content, metadata, occurred_at, 1 - (embedding <=> ?) as similarity', [$target])
-            ->orderByRaw('embedding <=> ?', [$target])
-            ->limit($query->limit)
-            ->get()
-            ->all();
+        // IN A TRANSACTION BECAUSE `SET LOCAL` IS SCOPED TO ONE. Outside a
+        // transaction block Postgres warns and discards it, so this ran on a
+        // bare connection and configured nothing: measured at the server's
+        // default of 40 while the constructor documented, accepted and reported
+        // 100. A knob that silently does nothing is worse than an absent one —
+        // the recall it promises is what a caller plans around.
+        //
+        // Per-transaction rather than per-session, deliberately: a pooled
+        // connection carrying a previous caller's ef_search would make recall
+        // depend on who ran last. The cost is a BEGIN/COMMIT around a read, and
+        // a caller who is ALREADY in a transaction gets a savepoint, where the
+        // setting lasts until their own transaction ends rather than ours.
+        $rows = $this->connection->transaction(function () use ($query, $target): array {
+            $this->connection->statement('SET LOCAL hnsw.ef_search = '.$this->efSearch);
+
+            // `<=>` is cosine DISTANCE, so 1 - it is the similarity. Ordering by
+            // the operator rather than by the computed column is what lets the
+            // planner use the HNSW index; ordering by `similarity DESC` does not.
+            return $this->readable($query)
+                ->selectRaw('collection, record_id, content, metadata, occurred_at, 1 - (embedding <=> ?) as similarity', [$target])
+                ->orderByRaw('embedding <=> ?', [$target])
+                ->limit($query->limit)
+                ->get()
+                ->all();
+        });
 
         if ($rows === []) {
             // Only worth a second query on the path that found nothing: an empty

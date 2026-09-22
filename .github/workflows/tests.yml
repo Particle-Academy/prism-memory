@@ -63,6 +63,62 @@ jobs:
       - name: Execute tests
         run: vendor/bin/pest
 
+  pgvector:
+    name: pgvector driver, against a real Postgres
+    runs-on: ubuntu-latest
+    needs: third-party
+    timeout-minutes: 10
+
+    # WHY THIS JOB EXISTS. `tests/PgVectorStoreTest.php` skips itself unless
+    # MEMORY_PGVECTOR_DSN is set, and nothing set it — so a 357-line vector
+    # store shipped with a suite that had never run, here or anywhere, while
+    # every Tests run reported green. The skip message was honest about it and
+    # that changed nothing: nobody investigates a clean report. See
+    # `.ai/knowledge/gates-pointed-at-nothing.md` in the envelope.
+    #
+    # Its own job rather than the matrix: pgvector cannot be faked into SQLite,
+    # and standing a database up in all ten matrix legs buys no coverage the
+    # driver does not already have from one.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: prism
+          POSTGRES_PASSWORD: prism
+          POSTGRES_DB: prism_memory
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U prism"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.3
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, pgsql, pdo_pgsql, bcmath, fileinfo
+          coverage: none
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction
+
+      # MEMORY_PGVECTOR_REQUIRED turns the suite's skip into a failure. Without
+      # it a Postgres service that never came up would leave this job green and
+      # skipping, which is the failure it was added to prevent.
+      - name: Execute the pgvector suite
+        env:
+          MEMORY_PGVECTOR_DSN: pgsql:host=127.0.0.1;port=5432;dbname=prism_memory
+          MEMORY_PGVECTOR_USER: prism
+          MEMORY_PGVECTOR_PASSWORD: prism
+          MEMORY_PGVECTOR_REQUIRED: '1'
+        run: vendor/bin/pest tests/PgVectorStoreTest.php
+
   third-party:
     name: Third-party dependency allowlist
     runs-on: ubuntu-latest
