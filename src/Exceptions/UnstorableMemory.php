@@ -58,13 +58,14 @@ final class UnstorableMemory extends RuntimeException
     public static function unfilterableMetadataKey(string $key): self
     {
         return new self(
-            "Memory metadata key [{$key}] contains \"->\" or a double quote, and cannot be stored.
+            "Memory metadata key [{$key}] contains \"->\", \"[\" or a double quote, and cannot be stored.
 
 "
             .'A metadata key is used as a JSON PATH when the row is later filtered, not as a bound value. '
             .'A key containing `->` compiles to a traversal into nesting that flat metadata does not have, '
             .'so it matches zero rows and reports NOTHING — the caller reads that as "no relevant '
-            .'memories" rather than "this filter is wrong". A double quote produces a malformed path and '
+            .'memories" rather than "this filter is wrong". A `[` is read as an array index and compiles '
+            .'to the same traversal. A double quote produces a malformed path and '
             .'makes the database raise, which points at the wrong layer.'.'
 
 '

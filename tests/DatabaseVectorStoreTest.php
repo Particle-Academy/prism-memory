@@ -307,6 +307,11 @@ it('refuses a metadata key that could be written and never filtered on', functio
 
     expect(fn (): VectorRecord => record('a', 'hello', metadata: ['we"ird' => 'x']))
         ->toThrow(UnstorableMemory::class, 'cannot be stored');
+
+    // `[` is the third spelling: Laravel reads a trailing bracket group as an
+    // array index, so `a[0]` becomes the same unreachable traversal as `a->b`.
+    expect(fn (): VectorRecord => record('a', 'hello', metadata: ['a[0]' => 'x']))
+        ->toThrow(UnstorableMemory::class, 'cannot be stored');
 });
 
 it('still stores an ordinary metadata key', function (): void {
@@ -489,6 +494,15 @@ it('refuses a metadata filter key that can never match', function (): void {
     // path and makes the DATABASE raise, pointing at the wrong layer.
     expect(fn (): VectorQuery => new VectorQuery(
         'handbook', Vector::of([1.0, 0.0]), 'test:space', 8, ['we"ird' => 'x'],
+    ))->toThrow(InvalidArgumentException::class, 'may not contain');
+
+    // The third spelling, which the first version of this guard permitted.
+    // Laravel's Postgres grammar reads a trailing bracket group as an array
+    // index: `a[0]` compiles to `"metadata"->'a'->>0`, the same traversal into
+    // nesting flat metadata does not have that `->` produces. Refusing two of
+    // the three spellings of one mistake reads as a closed guard and is not.
+    expect(fn (): VectorQuery => new VectorQuery(
+        'handbook', Vector::of([1.0, 0.0]), 'test:space', 8, ['a[0]' => 'x'],
     ))->toThrow(InvalidArgumentException::class, 'may not contain');
 });
 

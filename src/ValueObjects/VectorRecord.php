@@ -77,7 +77,11 @@ final readonly class VectorRecord
             // so a key containing `->` could be written and then never matched
             // by any filter — a row stored successfully and silently
             // unreachable. VectorQuery refuses the same shape on the way out.
-            if (str_contains((string) $key, '->') || str_contains((string) $key, '"')) {
+            //
+            // `[` is the third spelling of that mistake: Laravel reads a
+            // trailing bracket group as an array index, so `a[0]` becomes the
+            // same traversal into nesting flat metadata does not have.
+            if (str_contains((string) $key, '->') || str_contains((string) $key, '"') || str_contains((string) $key, '[')) {
                 throw UnstorableMemory::unfilterableMetadataKey((string) $key);
             }
         }

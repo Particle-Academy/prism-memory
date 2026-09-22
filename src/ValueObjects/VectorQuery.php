@@ -103,6 +103,15 @@ final readonly class VectorQuery
         // path and the DATABASE raises, pointing whoever reads the stack at the
         // wrong layer entirely.
         //
+        // `[` IS A THIRD PATH SYNTAX, and the first version of this guard did
+        // not know it. Laravel's Postgres grammar reads a trailing bracket group
+        // as an array index, so `a[0]` compiles to `"metadata"->'a'->>0` —
+        // measured, not assumed — which is the same traversal into absent
+        // nesting that `->` produces, reached through a character the guard
+        // permitted. Refusing two of the three spellings of one mistake is the
+        // shape of every miss in this ecosystem's gates-pointed-at-nothing note:
+        // the rule was right and the set it was applied to was incomplete.
+        //
         // Not injection — the value is bound and the key lands inside a
         // single-quoted string literal, so a quote breaks the JSON path and not
         // the statement. Refused here anyway, because "cannot escape the query"
@@ -116,9 +125,9 @@ final readonly class VectorQuery
                 );
             }
 
-            if (str_contains($key, '->') || str_contains($key, '"')) {
+            if (str_contains($key, '->') || str_contains($key, '"') || str_contains($key, '[')) {
                 throw new InvalidArgumentException(
-                    'A metadata filter key may not contain "->" or a double quote, and ['.$key.'] does. '
+                    'A metadata filter key may not contain "->", "[" or a double quote, and ['.$key.'] does. '
                     .'Metadata is flat and scalar by contract, so a traversal key can never match — it '
                     .'would return zero rows with no error, which reads as "nothing relevant" instead of '
                     .'"this filter is wrong".'
