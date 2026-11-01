@@ -70,6 +70,8 @@ return [
     'embeddings' => [
         'provider' => env('MEMORY_EMBEDDINGS_PROVIDER', 'openai'),
         'model' => env('MEMORY_EMBEDDINGS_MODEL', 'text-embedding-3-small'),
+        'queue' => env('MEMORY_EMBEDDINGS_QUEUE'),
+        'connection' => env('MEMORY_EMBEDDINGS_CONNECTION'),
 
         // How many memories go in one provider call. Every embeddings endpoint
         // takes an array, so a turn producing six memories should cost one
@@ -236,6 +238,7 @@ return [
          */
         'pgvector' => [
             'driver' => 'pgvector',
+            'extension_schema' => env('MEMORY_PGVECTOR_EXTENSION_SCHEMA'),
             'connection' => env('MEMORY_PGVECTOR_CONNECTION'),
             'table' => 'memory_vectors_pgvector',
             'dimensions' => (int) env('MEMORY_PGVECTOR_DIMENSIONS', 1536),

@@ -11,9 +11,12 @@ use Illuminate\Support\Carbon;
 use Prism\Memory\Contracts\Embedder;
 use Prism\Memory\Contracts\TokenCounter;
 use Prism\Memory\Contracts\VectorStore;
+use Prism\Memory\Contracts\WritesEmbeddingsConditionally;
 use Prism\Memory\Enums\MemoryKind;
 use Prism\Memory\Exceptions\UnstorableMemory;
 use Prism\Memory\Jobs\EmbedMemories;
+use Prism\Memory\Support\CallerIdentity;
+use Prism\Memory\Support\EmbeddingRouting;
 use Prism\Memory\Support\RecallSettings;
 use Prism\Memory\ValueObjects\Recalled;
 use Prism\Memory\ValueObjects\Recollection;
@@ -83,6 +86,7 @@ final class Memory
         private readonly int $batchSize = 96,
         private readonly bool $synchronous = false,
         private readonly bool $rememberToolResults = true,
+        private readonly ?EmbeddingRouting $embeddingRouting = null,
     ) {}
 
     public function collection(): string
@@ -111,6 +115,7 @@ final class Memory
             batchSize: $this->batchSize,
             synchronous: true,
             rememberToolResults: $this->rememberToolResults,
+            embeddingRouting: $this->embeddingRouting,
         );
     }
 
@@ -124,13 +129,30 @@ final class Memory
      * @param  array<string, scalar|null>  $metadata  Merged into every record written.
      * @return list<string> The ids written, which is what {@see forget()} takes.
      */
-    public function remember(iterable|Message|string $subject, array $metadata = [], ?Carbon $occurredAt = null): array
-    {
+    public function remember(
+        iterable|Message|string $subject,
+        array $metadata = [],
+        ?Carbon $occurredAt = null,
+        #[\SensitiveParameter] ?string $identity = null,
+        ?string $queue = null,
+        ?string $connection = null,
+    ): array {
+        $caller = $identity === null ? null : new CallerIdentity($identity);
+        $routing = ($this->embeddingRouting ?? new EmbeddingRouting)->withOverrides($queue, $connection);
+        $occurrences = [];
         $records = [];
         $at = $occurredAt ?? Carbon::now();
 
         foreach ($this->observationsIn($subject) as $observation) {
             [$content, $role, $kind, $extra] = $observation;
+            $id = $this->identify($content, $role, (string) ($extra['tool_name'] ?? ''));
+            if ($caller !== null) {
+                $leaf = $caller->leaf($content, $role, $kind,
+                    (string) ($extra['tool_name'] ?? ''), (string) ($extra['tool_call_id'] ?? ''));
+                $occurrence = $occurrences[$leaf] ?? 0;
+                $occurrences[$leaf] = $occurrence + 1;
+                $id = $caller->identify($this->collection, $leaf, $occurrence);
+            }
 
             $records[] = new VectorRecord(
                 collection: $this->collection,
@@ -143,7 +165,7 @@ final class Memory
                 // does: an identical payload returned by two different tools is
                 // two facts about the conversation, and collapsing them loses
                 // which tool said it.
-                id: $this->identify($content, $role, (string) ($extra['tool_name'] ?? '')),
+                id: $id,
                 content: $content,
                 vector: null,
                 space: $this->embedder->space(),
@@ -173,7 +195,14 @@ final class Memory
             // backlog somebody else left behind.
             $this->embed($records);
         } else {
-            $this->bus->dispatch(new EmbedMemories($this->collection, $this->batchSize));
+            $job = new EmbedMemories($this->collection, $this->batchSize);
+            if ($routing->queue !== null) {
+                $job->onQueue($routing->queue);
+            }
+            if ($routing->connection !== null) {
+                $job->onConnection($routing->connection);
+            }
+            $this->bus->dispatch($job);
         }
 
         return $ids;
@@ -316,9 +345,9 @@ final class Memory
      * happened.
      *
      * Two workers draining the same collection at once will embed some of the
-     * same rows twice. That is wasted tokens, not corruption: the write is
-     * idempotent on (collection, id), so the second one replaces the first with
-     * the same vector. Locking to avoid it would trade a bounded, rare cost for
+     * same rows twice. Built-in stores atomically complete only a matching,
+     * still unembedded row, so a second writer drops its redundant vector.
+     * Locking to avoid the provider cost would trade a bounded, rare cost for
      * an unbounded one — a lock that is held when a worker dies is a collection
      * that stops being embedded at all.
      */
@@ -351,17 +380,41 @@ final class Memory
                 $batch,
             ));
 
-            $written = [];
-
             foreach ($batch as $index => $record) {
-                $written[] = $record->withVector($vectors[$index]);
+                if ($this->store instanceof WritesEmbeddingsConditionally) {
+                    $embedded += (int) $this->store->writeEmbedding($record, $vectors[$index]);
+                } else {
+                    $embedded += (int) $this->writeEmbeddingBestEffort($record, $vectors[$index]);
+                }
             }
-
-            $this->store->upsert($written);
-            $embedded += count($written);
         }
 
         return $embedded;
+    }
+
+    /**
+     * Compatibility for stores implementing only the original eight methods.
+     * No insertion is intended: find a current, matching unembedded record and
+     * preserve its metadata. The check/upsert window is NOT atomic; custom
+     * stores must implement WritesEmbeddingsConditionally to close it.
+     */
+    private function writeEmbeddingBestEffort(VectorRecord $snapshot, Vector $vector): bool
+    {
+        $current = $this->store->unembedded($snapshot->collection, max(1, $this->store->count($snapshot->collection)));
+
+        foreach ($current as $record) {
+            if ($record->collection === $snapshot->collection
+                && $record->id === $snapshot->id
+                && $record->content === $snapshot->content
+                && $record->space === $snapshot->space
+                && ! $record->isEmbedded()) {
+                $this->store->upsert([$record->withVector($vector)]);
+
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

@@ -9,8 +9,10 @@ use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Carbon;
 use Prism\Memory\Contracts\VectorStore;
+use Prism\Memory\Contracts\WritesEmbeddingsConditionally;
 use Prism\Memory\Enums\Durability;
 use Prism\Memory\Exceptions\EmbeddingSpaceMismatch;
+use Prism\Memory\Support\PgVectorSchema;
 use Prism\Memory\ValueObjects\Vector;
 use Prism\Memory\ValueObjects\VectorMatch;
 use Prism\Memory\ValueObjects\VectorQuery;
@@ -63,8 +65,10 @@ use stdClass;
  * application does not already run, which makes it the cheapest first step off
  * the portable driver, not because it is the intended destination for everyone.
  */
-final class PgVectorStore implements VectorStore
+final class PgVectorStore implements VectorStore, WritesEmbeddingsConditionally
 {
+    private readonly PgVectorSchema $extension;
+
     /**
      * @param  int  $dimensions  The width of the indexed column. Must match the embedding model.
      * @param  int  $efSearch  HNSW candidate list size. Higher is more accurate and slower.
@@ -74,7 +78,10 @@ final class PgVectorStore implements VectorStore
         private readonly int $dimensions,
         private readonly string $table = 'memory_vectors_pgvector',
         private readonly int $efSearch = 100,
-    ) {}
+        ?string $extensionSchema = null,
+    ) {
+        $this->extension = new PgVectorSchema($extensionSchema);
+    }
 
     #[\Override]
     public function upsert(iterable $records): void
@@ -116,6 +123,22 @@ final class PgVectorStore implements VectorStore
     }
 
     #[\Override]
+    public function writeEmbedding(VectorRecord $snapshot, Vector $vector): bool
+    {
+        if ($vector->dimensions() !== $this->dimensions) {
+            throw EmbeddingSpaceMismatch::dimensions($snapshot->id, $vector->dimensions(), $this->dimensions);
+        }
+
+        return $this->vectors()
+            ->whereRaw('collection COLLATE "C" = ?', [$snapshot->collection])
+            ->whereRaw('record_id COLLATE "C" = ?', [$snapshot->id])
+            ->whereRaw('content COLLATE "C" = ?', [$snapshot->content])
+            ->whereRaw('space COLLATE "C" = ?', [$snapshot->space])
+            ->whereNull('embedding')
+            ->update(['embedding' => $this->literal($vector)]) === 1;
+    }
+
+    #[\Override]
     public function search(VectorQuery $query): array
     {
         if ($query->vector->dimensions() !== $this->dimensions) {
@@ -127,6 +150,7 @@ final class PgVectorStore implements VectorStore
         }
 
         $target = $this->literal($query->vector);
+        $operator = $this->extension->cosineOperator();
 
         // IN A TRANSACTION BECAUSE `SET LOCAL` IS SCOPED TO ONE. Outside a
         // transaction block Postgres warns and discards it, so this ran on a
@@ -140,15 +164,15 @@ final class PgVectorStore implements VectorStore
         // depend on who ran last. The cost is a BEGIN/COMMIT around a read, and
         // a caller who is ALREADY in a transaction gets a savepoint, where the
         // setting lasts until their own transaction ends rather than ours.
-        $rows = $this->connection->transaction(function () use ($query, $target): array {
+        $rows = $this->connection->transaction(function () use ($query, $target, $operator): array {
             $this->connection->statement('SET LOCAL hnsw.ef_search = '.$this->efSearch);
 
             // `<=>` is cosine DISTANCE, so 1 - it is the similarity. Ordering by
             // the operator rather than by the computed column is what lets the
             // planner use the HNSW index; ordering by `similarity DESC` does not.
             return $this->readable($query)
-                ->selectRaw('collection, record_id, content, metadata, occurred_at, 1 - (embedding <=> ?) as similarity', [$target])
-                ->orderByRaw('embedding <=> ?', [$target])
+                ->selectRaw('collection, record_id, content, metadata, occurred_at, 1 - (embedding '.$operator.' ?) as similarity', [$target])
+                ->orderByRaw('embedding '.$operator.' ?', [$target])
                 ->limit($query->limit)
                 ->get()
                 ->all();

@@ -20,6 +20,12 @@ use RuntimeException;
  */
 final class UnstorableMemory extends RuntimeException
 {
+    public static function invalidCallerIdentity(): self
+    {
+        return new self('Memory identity must contain 1–512 UTF-8 bytes, include a non-whitespace character, '
+            .'and contain no ASCII control or DEL characters.');
+    }
+
     public static function blankContent(string $id): self
     {
         return new self(

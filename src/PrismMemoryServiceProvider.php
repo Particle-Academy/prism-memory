@@ -12,6 +12,7 @@ use Prism\Memory\Contracts\TokenCounter;
 use Prism\Memory\Contracts\VectorStore;
 use Prism\Memory\Stores\VectorStoreManager;
 use Prism\Memory\Support\HeuristicTokenCounter;
+use Prism\Memory\Support\PgVectorSchema;
 use Prism\Memory\Support\PrismEmbedder;
 
 class PrismMemoryServiceProvider extends ServiceProvider
@@ -58,6 +59,8 @@ class PrismMemoryServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        PgVectorSchema::from($this->app['config']->get('memory.drivers.pgvector.extension_schema'));
+
         // Loaded rather than only publishable, so memory works on install with
         // no setup step. Publish them when you need to change the schema.
         $this->loadMigrationsFrom(__DIR__.'/../database/migrations');

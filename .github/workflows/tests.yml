@@ -130,6 +130,52 @@ jobs:
           MEMORY_PGVECTOR_REQUIRED: '1'
         run: vendor/bin/pest tests/PgVectorStoreTest.php
 
+  pgvector-schema:
+    name: pgvector extension schema - ${{ matrix.profile }}
+    runs-on: ubuntu-latest
+    needs: third-party
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [default, public, custom]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: prism
+          POSTGRES_PASSWORD: prism
+          POSTGRES_DB: prism_memory
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U prism"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.3
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, pgsql, pdo_pgsql, bcmath, fileinfo
+          coverage: none
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction
+      - name: Audit resolved dependencies
+        run: composer audit --no-interaction
+      - name: Published migration and native namespace controls
+        env:
+          MEMORY_PGVECTOR_DSN: "pgsql:host=127.0.0.1;port=5432;dbname=prism_memory"
+          MEMORY_PGVECTOR_USER: prism
+          MEMORY_PGVECTOR_PASSWORD: prism
+          MEMORY_PGVECTOR_DIMENSIONS: 3
+          MEMORY_PGVECTOR_SCHEMA_PROFILE: ${{ matrix.profile }}
+          MEMORY_PGVECTOR_SCHEMA_REQUIRED: 1
+        run: vendor/bin/pest tests/PgVectorSchemaTest.php
+
   third-party:
     name: Third-party dependency allowlist
     runs-on: ubuntu-latest
