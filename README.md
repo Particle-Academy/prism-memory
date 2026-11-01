@@ -105,6 +105,43 @@ conversation re-recorded after a retry does not double the store, and a duplicat
 slots in one recall's results. The same sentence said by the user and echoed by the assistant stays
 two memories — a claim and a confirmation are two different facts about a conversation.
 
+### Caller-owned identity
+
+Supply `identity` when equal text from different source messages must remain separate:
+
+```php
+$ids = $memory->remember($message, ['chat_id' => $chat->id], identity: 'message:'.$messageId);
+```
+
+Without `identity`, the existing content-derived IDs and deduplication stay unchanged. With it,
+IDs join the collection, caller key, content and message/tool provenance. Retrying the same key
+and subject returns the same IDs. Repeated identical observations within that subject get distinct,
+deterministic IDs; inserting an unrelated observation does not renumber them. Caller IDs start
+with `caller:` and coexist with content-derived IDs, so switching modes does not merge old records.
+
+Keys must contain 1–512 UTF-8 bytes, contain something other than whitespace, and contain no ASCII
+control characters. They are not trimmed or normalized. The key is hashed into IDs; it is not
+automatically stored in metadata, sent to the embedder, or included in the queued job.
+
+Editing content produces a **new revision ID**. It does not replace or delete an earlier revision
+or remove trailing observations from an earlier, longer subject. Store the returned IDs and call
+`forget($previousIds)` when replacing a source message. Metadata is still updated on a same-key,
+same-content retry.
+
+### Embedding queue and connection
+
+Set `memory.embeddings.queue` and `memory.embeddings.connection`, or their environment variables
+`MEMORY_EMBEDDINGS_QUEUE` and `MEMORY_EMBEDDINGS_CONNECTION`, to choose dispatch defaults.
+Both default to null, preserving Laravel's queue and connection defaults.
+
+```php
+$memory->remember($message, queue: 'batch', connection: 'redis');
+```
+
+Each non-null per-call value overrides its configured default for that call. A null value inherits
+the configured value. This never changes later calls or a `synchronously()` copy; synchronous
+embedding dispatches no job. Queue and connection names must be non-blank strings.
+
 ## recall()
 
 ```php
@@ -198,6 +235,21 @@ data.
 system knows of them, and a soft delete answers it with a row that still exists — the wrong answer
 to give and an expensive one to be found giving. `forget()` returns how many rows went, because
 that assertion is one somebody may later have to evidence and a void return is not evidence.
+
+Built-in stores finish an embedding with an atomic, conditional update. If the record was deleted,
+its content or embedding space changed, or another worker already embedded it, the stale vector is
+discarded. Completion updates only vector/index fields, preserving current metadata and dates.
+`embedPending()` returns the number actually written, excluding discarded vectors.
+
+Custom stores keep the original eight-method `VectorStore` contract. Implement the optional
+`Prism\Memory\Contracts\WritesEmbeddingsConditionally` capability to provide the same guarantee:
+match collection, ID, exact content and space, require an unembedded record, and update only its
+vector/index fields atomically, with no insert. Return false for a stale snapshot.
+
+Without that capability, embedding re-reads the collection's unembedded records and upserts only a
+matching current record with its current metadata. This compatibility fallback scans the collection
+and is **best effort**: deletion or revision between the check and upsert can still be undone.
+Custom stores used with concurrent writes or deletion should implement the optional capability.
 
 Retention (`memory.retention`) is off by default, and expiry is enforced **on read** — a memory
 past its window is never recalled just because nothing has pruned it. Null is the default because a
@@ -386,6 +438,17 @@ permitted to install extensions — **on a managed Postgres the application's ro
 frequently is not**, and you will find out at migrate time. It creates a separate
 table from `memory_vectors`, so publishing it cannot disturb memories you already
 have.
+
+When the extension is outside the application's `search_path`, set
+`memory.drivers.pgvector.extension_schema` (or `MEMORY_PGVECTOR_EXTENSION_SCHEMA`) to its schema,
+for example `public` or `Memory_Ext17`. The migration qualifies the vector type and HNSW operator
+class, and searches qualify the cosine operator. This does not widen `search_path` or move an
+already installed extension. Create the schema first and ensure the application role has the
+necessary access. The configured schema must match the extension's existing location.
+
+Null preserves the previous unqualified SQL. A configured name must match
+`[A-Za-z_][A-Za-z0-9_]{0,62}` exactly; the package quotes it and rejects other values during boot,
+before executing SQL. Dots, quoted identifiers, SQL fragments and longer names are not accepted.
 
 Search here is genuinely sublinear: HNSW walks a graph rather than ranking every
 row. It returns **approximate** nearest neighbours — `ef_search` is the

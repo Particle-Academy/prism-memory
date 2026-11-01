@@ -10,6 +10,7 @@ use Prism\Memory\Stores\PgVectorStore;
 use Prism\Memory\ValueObjects\Vector;
 use Prism\Memory\ValueObjects\VectorQuery;
 use Prism\Memory\ValueObjects\VectorRecord;
+use Tests\Fixtures\WritebackScenario;
 
 /*
 |--------------------------------------------------------------------------
@@ -32,6 +33,11 @@ use Prism\Memory\ValueObjects\VectorRecord;
 */
 
 const PGV_DIMENSIONS = 3;
+
+it('drops obsolete in-flight vectors and preserves current fields on Postgres', function (string $change, ?string $identity): void {
+    WritebackScenario::run(pgvStore(), $change, $identity);
+})->with(['forgotten revision', 'forgotten', 'content', 'space', 'already embedded', 'metadata'])
+    ->with(['legacy identity' => [null], 'caller identity' => ['chat-message:123']]);
 
 function pgvAvailable(): bool
 {

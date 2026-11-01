@@ -6,6 +6,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Prism\Memory\Support\PgVectorSchema;
 
 /**
  * The pgvector table, published rather than auto-loaded.
@@ -36,13 +37,14 @@ return new class extends Migration
 {
     public function up(): void
     {
+        $extension = PgVectorSchema::from(config('memory.drivers.pgvector.extension_schema'));
         $dimensions = (int) env('MEMORY_PGVECTOR_DIMENSIONS', 1536);
 
         // Requires a role that may install extensions. On a managed Postgres
         // this is frequently NOT the application's role — the failure arrives
         // here rather than at first search, which is the better of the two
         // places for it to arrive.
-        DB::statement('CREATE EXTENSION IF NOT EXISTS vector');
+        DB::statement($extension->installStatement());
 
         Schema::create('memory_vectors_pgvector', function (Blueprint $table): void {
             $table->id();
@@ -61,14 +63,14 @@ return new class extends Migration
             $table->index('expires_at', 'memory_pgv_expires_index');
         });
 
-        DB::statement("ALTER TABLE memory_vectors_pgvector ADD COLUMN embedding vector({$dimensions})");
+        DB::statement('ALTER TABLE memory_vectors_pgvector ADD COLUMN embedding '.$extension->type()."({$dimensions})");
 
         // Filtered to the embedded rows. A record written before its vector
         // arrives is the normal path when embedding is queued, and indexing the
         // NULLs would carry them through every graph build for nothing.
         DB::statement(
             'CREATE INDEX memory_pgv_embedding_hnsw ON memory_vectors_pgvector '
-            .'USING hnsw (embedding vector_cosine_ops) WHERE embedding IS NOT NULL'
+            .'USING hnsw (embedding '.$extension->cosineOpclass().') WHERE embedding IS NOT NULL'
         );
 
         // The search filters on these before it ranks, and on a large table the

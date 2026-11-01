@@ -48,6 +48,13 @@ use Prism\Memory\ValueObjects\VectorRecord;
  * anything resembling a query builder. A store takes vectors and returns
  * neighbours. Everything else is the consuming package's business.
  *
+ * Embedding completion may opt into {@see WritesEmbeddingsConditionally} for
+ * an atomic update of a current unembedded record, without inserting a deleted
+ * one. The original eight methods remain sufficient for compatibility, but
+ * Memory's re-read/upsert fallback is not atomic: a deletion or revision during
+ * that remaining check/write window can still be undone. Custom stores handling
+ * concurrent writers should implement the optional capability.
+ *
  * ## Absent and null in metadata — READ THIS BEFORE PORTING
  *
  * There are TWO rules here and they operate at DIFFERENT LAYERS. A port that
