@@ -10,6 +10,7 @@ use Illuminate\Database\DatabaseManager;
 use Prism\Memory\Contracts\VectorStore;
 use Prism\Memory\Exceptions\UnsafeMemoryConfiguration;
 use Prism\Memory\Support\IndexSettings;
+use Prism\Memory\Support\PgVectorSchema;
 
 /**
  * Resolves the vector store, and refuses a configuration that would lose it.
@@ -134,6 +135,7 @@ class VectorStoreManager
                 dimensions: (int) ($driver['dimensions'] ?? 1536),
                 table: (string) ($driver['table'] ?? 'memory_vectors_pgvector'),
                 efSearch: (int) ($driver['ef_search'] ?? 100),
+                extensionSchema: PgVectorSchema::from($driver['extension_schema'] ?? null)->name,
             ),
             default => throw UnsafeMemoryConfiguration::unknownDriver($name),
         };

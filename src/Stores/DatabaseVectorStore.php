@@ -7,8 +7,12 @@ namespace Prism\Memory\Stores;
 use DateTimeInterface;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Database\Query\Grammars\MySqlGrammar;
+use Illuminate\Database\Query\Grammars\PostgresGrammar;
+use Illuminate\Database\Query\Grammars\SQLiteGrammar;
 use Illuminate\Support\Carbon;
 use Prism\Memory\Contracts\VectorStore;
+use Prism\Memory\Contracts\WritesEmbeddingsConditionally;
 use Prism\Memory\Enums\Durability;
 use Prism\Memory\Exceptions\EmbeddingSpaceMismatch;
 use Prism\Memory\Support\BinarySignature;
@@ -60,7 +64,7 @@ use stdClass;
  * recommends. It costs nothing, and it means a row written by PHP reads back
  * correctly in TypeScript and Python, which is not otherwise true.
  */
-final class DatabaseVectorStore implements VectorStore
+final class DatabaseVectorStore implements VectorStore, WritesEmbeddingsConditionally
 {
     private readonly BinarySignature $signatures;
 
@@ -112,6 +116,35 @@ final class DatabaseVectorStore implements VectorStore
                 ],
             );
         }
+    }
+
+    #[\Override]
+    public function writeEmbedding(VectorRecord $snapshot, Vector $vector): bool
+    {
+        $query = $this->vectors()->whereNull('vector');
+
+        // A host's case-insensitive collation must not make changed content or
+        // a different embedding space match a stale snapshot. Column names are
+        // fixed here; every snapshot value remains a bound parameter.
+        foreach ([
+            'collection' => $snapshot->collection,
+            'record_id' => $snapshot->id,
+            'content' => $snapshot->content,
+            'space' => $snapshot->space,
+        ] as $column => $value) {
+            match (true) {
+                $query->getGrammar() instanceof MySqlGrammar => $query->whereRaw('CAST('.$column.' AS BINARY) = CAST(? AS BINARY)', [$value]),
+                $query->getGrammar() instanceof SQLiteGrammar => $query->whereRaw($column.' COLLATE BINARY = ?', [$value]),
+                $query->getGrammar() instanceof PostgresGrammar => $query->whereRaw($column.' COLLATE "C" = ?', [$value]),
+                default => $query->where($column, $value),
+            };
+        }
+
+        return $query->update([
+            'vector' => $vector->pack(),
+            'dimensions' => $vector->dimensions(),
+            'signature' => $this->signatures->of($vector),
+        ]) === 1;
     }
 
     #[\Override]

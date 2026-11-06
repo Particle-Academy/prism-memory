@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Prism\Memory\Contracts\Embedder;
 use Prism\Memory\Contracts\TokenCounter;
 use Prism\Memory\Stores\VectorStoreManager;
+use Prism\Memory\Support\EmbeddingRouting;
 use Prism\Memory\Support\RecallSettings;
 
 /**
@@ -77,6 +78,9 @@ class PrismMemory
             retentionSeconds: $this->retentionSeconds(),
             batchSize: $this->batchSize(),
             rememberToolResults: $this->rememberToolResults(),
+            embeddingRouting: EmbeddingRouting::fromArray(
+                is_array($this->config['embeddings'] ?? null) ? $this->config['embeddings'] : [],
+            ),
         );
     }
 

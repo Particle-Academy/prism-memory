@@ -20,6 +20,17 @@ use RuntimeException;
  */
 final class UnsafeMemoryConfiguration extends RuntimeException
 {
+    public static function invalidExtensionSchema(): self
+    {
+        return new self('memory.drivers.pgvector.extension_schema must be null or an ASCII SQL identifier '
+            .'of 1–63 characters, starting with a letter or underscore.');
+    }
+
+    public static function invalidEmbeddingRoute(string $key): self
+    {
+        return new self('memory.embeddings.'.$key.' must be null or a non-empty string.');
+    }
+
     public static function volatileStore(string $driver): self
     {
         return new self(
