@@ -18,7 +18,7 @@ $memory->remember($response->messages);
 $relevant = $memory->recall('billing address', budget: 1500);
 
 Prism::text()
-    ->using(Provider::Anthropic, 'claude-sonnet-4-5')
+    ->using(Provider::Anthropic, 'claude-sonnet-5-5')
     ->withSystemPrompt($instructions)
     ->withSystemPrompt($relevant->asContext())
     ->withPrompt($question)
